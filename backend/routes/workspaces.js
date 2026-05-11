@@ -31,7 +31,6 @@ router.post('/', protect, async (req, res) => {
       members: [{ user: req.user._id, role: 'admin' }],
     });
 
-    // Auto-create General channel
     await Channel.create({
       name: 'general',
       description: 'Main channel for the workspace',
@@ -64,7 +63,6 @@ router.post('/join', protect, async (req, res) => {
     workspace.members.push({ user: req.user._id, role: 'member' });
     await workspace.save();
 
-    // Add user to general channel
     await Channel.updateMany(
       { workspace: workspace._id, type: 'channel', isPrivate: false },
       { $addToSet: { members: req.user._id } }
@@ -91,6 +89,101 @@ router.get('/:id', protect, async (req, res) => {
     if (!isMember) return res.status(403).json({ message: 'Not a member' });
 
     res.json(workspace);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// POST /api/workspaces/:id/members - admin adds a user directly by userId
+router.post('/:id/members', protect, async (req, res) => {
+  try {
+    const { userId } = req.body;
+    if (!userId) return res.status(400).json({ message: 'userId required' });
+
+    const workspace = await Workspace.findById(req.params.id);
+    if (!workspace) return res.status(404).json({ message: 'Workspace not found' });
+
+    // Only admins can add members
+    const requester = workspace.members.find((m) => m.user.toString() === req.user._id.toString());
+    if (!requester || requester.role !== 'admin') {
+      return res.status(403).json({ message: 'Only admins can add members' });
+    }
+
+    // Check kung member na
+    const exists = workspace.members.find((m) => m.user.toString() === userId);
+    if (exists) return res.status(400).json({ message: 'User is already a member' });
+
+    // Check kung valid user
+    const targetUser = await User.findById(userId);
+    if (!targetUser) return res.status(404).json({ message: 'User not found' });
+
+    workspace.members.push({ user: userId, role: 'member' });
+    await workspace.save();
+
+    // Add to all public channels
+    await Channel.updateMany(
+      { workspace: workspace._id, type: 'channel', isPrivate: false },
+      { $addToSet: { members: userId } }
+    );
+
+    await User.findByIdAndUpdate(userId, { $addToSet: { workspaces: workspace._id } });
+
+    const updated = await Workspace.findById(workspace._id)
+      .populate('owner', 'name email avatar')
+      .populate('members.user', 'name email avatar status');
+
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// DELETE /api/workspaces/:id/members/:userId - admin removes a member
+router.delete('/:id/members/:userId', protect, async (req, res) => {
+  try {
+    const workspace = await Workspace.findById(req.params.id);
+    if (!workspace) return res.status(404).json({ message: 'Workspace not found' });
+
+    const requester = workspace.members.find((m) => m.user.toString() === req.user._id.toString());
+    if (!requester || requester.role !== 'admin') {
+      return res.status(403).json({ message: 'Only admins can remove members' });
+    }
+
+    // Wag ma-remove ang owner
+    if (workspace.owner.toString() === req.params.userId) {
+      return res.status(400).json({ message: 'Cannot remove the workspace owner' });
+    }
+
+    workspace.members = workspace.members.filter((m) => m.user.toString() !== req.params.userId);
+    await workspace.save();
+
+    await Channel.updateMany(
+      { workspace: workspace._id },
+      { $pull: { members: req.params.userId } }
+    );
+
+    await User.findByIdAndUpdate(req.params.userId, { $pull: { workspaces: workspace._id } });
+
+    res.json({ message: 'Member removed' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// POST /api/workspaces/:id/regenerate-code - admin regenerates invite code
+router.post('/:id/regenerate-code', protect, async (req, res) => {
+  try {
+    const workspace = await Workspace.findById(req.params.id);
+    if (!workspace) return res.status(404).json({ message: 'Workspace not found' });
+
+    const requester = workspace.members.find((m) => m.user.toString() === req.user._id.toString());
+    if (!requester || requester.role !== 'admin') {
+      return res.status(403).json({ message: 'Only admins can regenerate invite codes' });
+    }
+
+    workspace.inviteCode = Math.random().toString(36).substring(2, 10).toUpperCase();
+    await workspace.save();
+    res.json({ inviteCode: workspace.inviteCode });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
