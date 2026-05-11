@@ -59,12 +59,19 @@ class _ChatScreenState extends State<ChatScreen> {
 
     SocketService.on('message:new', (data) {
       try {
+        print(
+            '🔔 Got message:new — channel: ${data['channel']} | current: ${widget.channel.id}');
         final m = Message.fromJson(Map<String, dynamic>.from(data));
         if (m.channelId == widget.channel.id) {
-          setState(() => messages.add(m));
-          _scrollToBottom();
+          // Prevent duplicate kung naipasok na via HTTP response
+          if (!messages.any((existing) => existing.id == m.id)) {
+            setState(() => messages.add(m));
+            _scrollToBottom();
+          }
         }
-      } catch (_) {}
+      } catch (e) {
+        print('❌ Error parsing socket message: $e');
+      }
     });
 
     SocketService.on('message:deleted', (data) {
@@ -110,13 +117,22 @@ class _ChatScreenState extends State<ChatScreen> {
     SocketService.typingStop(widget.channel.id);
 
     try {
-      await ApiService.post(
+      // ✅ Get response & add message immediately (fallback kung di gumana socket)
+      final data = await ApiService.post(
         '/messages',
         {
           'channel': widget.channel.id,
           'content': text,
         },
       );
+
+      final newMessage = Message.fromJson(Map<String, dynamic>.from(data));
+
+      // Add only if not already added by socket broadcast
+      if (mounted && !messages.any((m) => m.id == newMessage.id)) {
+        setState(() => messages.add(newMessage));
+        _scrollToBottom();
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

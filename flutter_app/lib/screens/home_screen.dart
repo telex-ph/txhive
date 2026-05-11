@@ -70,6 +70,294 @@ class _HomeScreenState extends State<HomeScreen> {
     dms = (data as List).map((c) => Channel.fromJson(c)).toList();
   }
 
+  Future<void> _createOrOpenDm(String userId) async {
+    if (selectedWorkspaceId == null) {
+      _showError('Please select a workspace first');
+      return;
+    }
+
+    try {
+      final data = await ApiService.post(
+        '/channels/dm',
+        {
+          'userId': userId,
+          'workspaceId': selectedWorkspaceId,
+        },
+      );
+
+      final dm = Channel.fromJson(data);
+
+      await _loadDms();
+
+      if (!mounted) return;
+
+      setState(() {
+        final exists = dms.any((item) => item.id == dm.id);
+
+        if (!exists) {
+          dms.insert(0, dm);
+        }
+
+        selectedChannel = dm;
+      });
+    } catch (e) {
+      _showError(e.toString());
+    }
+  }
+
+  Future<void> _openNewDirectMessageDialog(String currentUserId) async {
+    if (selectedWorkspaceId == null) {
+      _showError('Please select a workspace first');
+      return;
+    }
+
+    List<dynamic> members = [];
+
+    try {
+      final data = await ApiService.get('/workspaces/$selectedWorkspaceId');
+      final rawMembers = (data['members'] as List?) ?? [];
+
+      members = rawMembers.where((m) {
+        final user = m['user'];
+
+        if (user is! Map) return false;
+
+        return user['_id']?.toString() != currentUserId.toString();
+      }).toList();
+    } catch (e) {
+      _showError(e.toString());
+      return;
+    }
+
+    if (!mounted) return;
+
+    final searchCtrl = TextEditingController();
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        String query = '';
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final filteredMembers = members.where((m) {
+              final user = m['user'];
+
+              if (user is! Map) return false;
+
+              final name = (user['name'] ?? '').toString().toLowerCase();
+              final email = (user['email'] ?? '').toString().toLowerCase();
+              final q = query.toLowerCase();
+
+              return q.isEmpty || name.contains(q) || email.contains(q);
+            }).toList();
+
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Container(
+                width: 430,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: _white,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.16),
+                      blurRadius: 28,
+                      offset: const Offset(0, 12),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(16),
+                            gradient: const LinearGradient(
+                              colors: [_primaryDark, _primary],
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.chat_bubble_outline_rounded,
+                            color: _white,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'New Direct Message',
+                                style: TextStyle(
+                                  color: _textDark,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              SizedBox(height: 2),
+                              Text(
+                                'Choose a teammate to message privately.',
+                                style: TextStyle(
+                                  color: _textMuted,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.pop(dialogContext),
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    TextField(
+                      controller: searchCtrl,
+                      decoration: InputDecoration(
+                        hintText: 'Search member',
+                        prefixIcon: const Icon(
+                          Icons.search_rounded,
+                          color: _primary,
+                        ),
+                        filled: true,
+                        fillColor: _surface,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 14,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(18),
+                          borderSide: BorderSide.none,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(18),
+                          borderSide: const BorderSide(color: _border),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(18),
+                          borderSide: const BorderSide(
+                            color: _primary,
+                            width: 1.4,
+                          ),
+                        ),
+                      ),
+                      onChanged: (value) {
+                        setDialogState(() => query = value);
+                      },
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      height: 330,
+                      child: filteredMembers.isEmpty
+                          ? const Center(
+                              child: Text(
+                                'No members found',
+                                style: TextStyle(
+                                  color: _textMuted,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            )
+                          : ListView.builder(
+                              itemCount: filteredMembers.length,
+                              itemBuilder: (_, index) {
+                                final m = filteredMembers[index];
+                                final user = Map<String, dynamic>.from(
+                                  (m['user'] as Map?) ?? {},
+                                );
+
+                                final userId = user['_id']?.toString() ?? '';
+                                final name =
+                                    (user['name'] ?? 'Unknown User').toString();
+                                final email = (user['email'] ?? '').toString();
+                                final initial = name.isNotEmpty
+                                    ? name[0].toUpperCase()
+                                    : '?';
+
+                                return Container(
+                                  margin: const EdgeInsets.only(bottom: 10),
+                                  decoration: BoxDecoration(
+                                    color: _surface,
+                                    borderRadius: BorderRadius.circular(18),
+                                    border: Border.all(color: _border),
+                                  ),
+                                  child: ListTile(
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 6,
+                                    ),
+                                    leading: CircleAvatar(
+                                      backgroundColor: const Color(0xFFF2D7D7),
+                                      child: Text(
+                                        initial,
+                                        style: const TextStyle(
+                                          color: _primary,
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
+                                    ),
+                                    title: Text(
+                                      name,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: _textDark,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                    subtitle: email.isEmpty
+                                        ? null
+                                        : Text(
+                                            email,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              color: _textMuted,
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                    trailing: const Icon(
+                                      Icons.arrow_forward_rounded,
+                                      color: _primary,
+                                    ),
+                                    onTap: userId.isEmpty
+                                        ? null
+                                        : () async {
+                                            Navigator.pop(dialogContext);
+
+                                            await _createOrOpenDm(userId);
+
+                                            if (!mounted) return;
+
+                                            if (_scaffoldKey.currentState
+                                                    ?.isDrawerOpen ??
+                                                false) {
+                                              Navigator.of(context).pop();
+                                            }
+                                          },
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    searchCtrl.dispose();
+  }
+
   Future<void> _createWorkspace() async {
     final result = await _showWorkspaceDialog(
       title: 'Create Workspace',
@@ -650,18 +938,36 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
               const SizedBox(height: 18),
-              _sectionLabel('DIRECT MESSAGES'),
+              _directMessagesHeader(currentUserId),
               const SizedBox(height: 8),
               if (dms.isEmpty)
                 _emptyListTile('No direct messages yet')
               else
-                ...dms.map(
-                  (d) => _dmTile(
-                    name: d.displayName(currentUserId),
+                ...dms.map((d) {
+                  final name = d.displayName(currentUserId);
+                  final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
+
+                  return ListTile(
+                    dense: true,
+                    leading: CircleAvatar(
+                      radius: 12,
+                      backgroundColor: const Color(0xFFF2D7D7),
+                      child: Text(
+                        initial,
+                        style: const TextStyle(
+                          color: _primary,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    title: Text(
+                      name.isEmpty ? 'Direct Message' : name,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                     selected: selectedChannel?.id == d.id,
                     onTap: () => _selectChannel(d),
-                  ),
-                ),
+                  );
+                }),
             ],
           ),
         ),
@@ -849,6 +1155,38 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _directMessagesHeader(String currentUserId) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(6, 12, 0, 4),
+      child: Row(
+        children: [
+          const Expanded(
+            child: Text(
+              'DIRECT MESSAGES',
+              style: TextStyle(
+                fontSize: 11,
+                color: _textMuted,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.1,
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: 'New direct message',
+            icon: const Icon(
+              Icons.add_comment_outlined,
+              size: 18,
+              color: _primary,
+            ),
+            onPressed: selectedWorkspaceId == null
+                ? null
+                : () => _openNewDirectMessageDialog(currentUserId),
+          ),
+        ],
       ),
     );
   }

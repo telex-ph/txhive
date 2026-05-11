@@ -65,27 +65,81 @@ router.post('/', protect, async (req, res) => {
 });
 
 // POST /api/channels/dm - start or get 1-on-1 DM
+// POST /api/channels/dm - start or get 1-on-1 DM
 router.post('/dm', protect, async (req, res) => {
   try {
-    const { userId } = req.body;
-    if (!userId) return res.status(400).json({ message: 'userId required' });
+    const { userId, workspaceId } = req.body;
 
-    let dm = await Channel.findOne({
+    if (!userId) {
+      return res.status(400).json({ message: 'userId required' });
+    }
+
+    if (userId.toString() === req.user._id.toString()) {
+      return res.status(400).json({
+        message: 'You cannot send a private message to yourself',
+      });
+    }
+
+    // Optional pero recommended:
+    // Kapag may workspaceId, siguraduhin na parehong member ng workspace.
+    if (workspaceId) {
+      const ws = await Workspace.findById(workspaceId);
+
+      if (!ws) {
+        return res.status(404).json({ message: 'Workspace not found' });
+      }
+
+      const memberIds = ws.members.map((m) => m.user.toString());
+
+      const currentUserIsMember = memberIds.includes(req.user._id.toString());
+      const targetUserIsMember = memberIds.includes(userId.toString());
+
+      if (!currentUserIsMember || !targetUserIsMember) {
+        return res.status(403).json({
+          message: 'Both users must be members of this workspace',
+        });
+      }
+    }
+
+    const query = {
       type: 'dm',
-      members: { $all: [req.user._id, userId], $size: 2 },
-    }).populate('members', 'name email avatar status');
+      members: {
+        $all: [req.user._id, userId],
+        $size: 2,
+      },
+    };
+
+    // Para per-workspace ang DM kung may workspaceId kang sinend from Flutter.
+    if (workspaceId) {
+      query.workspace = workspaceId;
+    }
+
+    let dm = await Channel.findOne(query).populate(
+      'members',
+      'name email avatar status'
+    );
+
+    let created = false;
 
     if (!dm) {
       dm = await Channel.create({
         name: 'dm',
         type: 'dm',
+        workspace: workspaceId || undefined,
+        isPrivate: true,
         members: [req.user._id, userId],
         createdBy: req.user._id,
       });
-      dm = await dm.populate('members', 'name email avatar status');
+
+      dm = await Channel.findById(dm._id).populate(
+        'members',
+        'name email avatar status'
+      );
+
+      created = true;
     }
 
-    res.json(dm);
+    res.status(created ? 201 : 200).json(dm);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

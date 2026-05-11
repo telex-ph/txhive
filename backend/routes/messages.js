@@ -24,9 +24,20 @@ const storage = new CloudinaryStorage({
 
 const upload = multer({ storage });
 
+
 // GET /api/messages/:channelId?page=1&limit=50
 router.get('/:channelId', protect, async (req, res) => {
   try {
+    const channel = await Channel.findOne({
+      _id: req.params.channelId,
+      members: req.user._id,
+    });
+
+    if (!channel) {
+      return res.status(403).json({
+        message: 'You do not have access to this conversation',
+      });
+    }
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 50;
     const skip = (page - 1) * limit;
@@ -45,15 +56,29 @@ router.get('/:channelId', protect, async (req, res) => {
 });
 
 // POST /api/messages - send message (also broadcast via socket)
+// POST /api/messages - send message (also broadcast via socket)
 router.post('/', protect, async (req, res) => {
   try {
-    const { channel, content, attachments, replyTo } = req.body;
+    const channel = await Channel.findOne({
+      _id: req.body.channel,
+      members: req.user._id,
+    });
+
+    if (!channel) {
+      return res.status(403).json({
+        message: 'You cannot send messages to this conversation',
+      });
+    }
+
+    const { content, attachments, replyTo } = req.body;
     if (!content && (!attachments || attachments.length === 0)) {
       return res.status(400).json({ message: 'Content or attachment required' });
     }
 
+    const channelId = channel._id.toString();
+
     let message = await Message.create({
-      channel,
+      channel: channelId,
       sender: req.user._id,
       content: content || '',
       attachments: attachments || [],
@@ -62,20 +87,31 @@ router.post('/', protect, async (req, res) => {
 
     message = await message.populate('sender', 'name email avatar');
     if (replyTo) {
-      message = await message.populate({ path: 'replyTo', populate: { path: 'sender', select: 'name avatar' } });
+      message = await message.populate({
+        path: 'replyTo',
+        populate: { path: 'sender', select: 'name avatar' },
+      });
     }
 
-    await Channel.findByIdAndUpdate(channel, {
+    await Channel.findByIdAndUpdate(channelId, {
       lastMessage: message._id,
       lastActivity: new Date(),
     });
 
-    // Broadcast through socket.io
-    const io = req.app.get('io');
-    io.to(`channel:${channel}`).emit('message:new', message);
+    // Convert to plain JSON to ensure ObjectIds become strings
+    const payload = JSON.parse(JSON.stringify(message));
 
-    res.status(201).json(message);
+    const io = req.app.get('io');
+    const roomName = `channel:${channelId}`;
+    const roomSize = io.sockets.adapter.rooms.get(roomName)?.size || 0;
+    
+    console.log(`📢 Broadcasting to ${roomName} | sockets in room: ${roomSize}`);
+    
+    io.to(roomName).emit('message:new', payload);
+
+    res.status(201).json(payload);
   } catch (err) {
+    console.error('❌ Send message error:', err);
     res.status(500).json({ message: err.message });
   }
 });
