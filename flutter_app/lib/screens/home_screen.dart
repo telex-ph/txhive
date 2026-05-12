@@ -358,6 +358,317 @@ class _HomeScreenState extends State<HomeScreen> {
     searchCtrl.dispose();
   }
 
+  Future<void> _openCreateChannelDialog() async {
+    if (selectedWorkspaceId == null) {
+      _showError('Please select a workspace first');
+      return;
+    }
+
+    final nameCtrl = TextEditingController();
+    final descCtrl = TextEditingController();
+    bool isPrivate = false;
+
+    final created = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Container(
+                width: 430,
+                padding: const EdgeInsets.all(22),
+                decoration: BoxDecoration(
+                  color: _white,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.16),
+                      blurRadius: 28,
+                      offset: const Offset(0, 12),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(16),
+                            gradient: const LinearGradient(
+                              colors: [_primaryDark, _primary],
+                            ),
+                          ),
+                          child: const Icon(Icons.tag_rounded, color: _white),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Create Channel',
+                                style: TextStyle(
+                                  color: _textDark,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              SizedBox(height: 2),
+                              Text(
+                                'Channels are where your team communicates.',
+                                style: TextStyle(
+                                  color: _textMuted,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.pop(dialogContext, false),
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    const Padding(
+                      padding: EdgeInsets.only(left: 4, bottom: 6),
+                      child: Text(
+                        'Channel name',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: _textMuted,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    TextField(
+                      controller: nameCtrl,
+                      autofocus: true,
+                      decoration: InputDecoration(
+                        hintText: 'e.g. marketing',
+                        prefixIcon:
+                            const Icon(Icons.tag_rounded, color: _primary),
+                        filled: true,
+                        fillColor: _surface,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 14,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(18),
+                          borderSide: BorderSide.none,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(18),
+                          borderSide: const BorderSide(color: _border),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(18),
+                          borderSide:
+                              const BorderSide(color: _primary, width: 1.4),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    const Padding(
+                      padding: EdgeInsets.only(left: 4, bottom: 6),
+                      child: Text(
+                        'Description (optional)',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: _textMuted,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    TextField(
+                      controller: descCtrl,
+                      maxLines: 2,
+                      decoration: InputDecoration(
+                        hintText: 'What is this channel about?',
+                        filled: true,
+                        fillColor: _surface,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 14,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(18),
+                          borderSide: BorderSide.none,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(18),
+                          borderSide: const BorderSide(color: _border),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(18),
+                          borderSide:
+                              const BorderSide(color: _primary, width: 1.4),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: _surface,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: _border),
+                      ),
+                      child: SwitchListTile(
+                        value: isPrivate,
+                        activeColor: _primary,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 4,
+                        ),
+                        title: Row(
+                          children: [
+                            Icon(
+                              isPrivate
+                                  ? Icons.lock_outline_rounded
+                                  : Icons.public_rounded,
+                              size: 18,
+                              color: isPrivate ? _primary : _textMuted,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              isPrivate ? 'Private channel' : 'Public channel',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                color: _textDark,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                        ),
+                        subtitle: Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            isPrivate
+                                ? 'Only invited people can join'
+                                : 'Anyone in the workspace can join',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: _textMuted,
+                            ),
+                          ),
+                        ),
+                        onChanged: (v) => setDialogState(() => isPrivate = v),
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () =>
+                                Navigator.pop(dialogContext, false),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: _textDark,
+                              side: const BorderSide(color: _border),
+                              minimumSize: const Size.fromHeight(50),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                            ),
+                            child: const Text(
+                              'Cancel',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(16),
+                              gradient: const LinearGradient(
+                                colors: [_primaryDark, _primary],
+                              ),
+                            ),
+                            child: ElevatedButton(
+                              onPressed: () async {
+                                final name = nameCtrl.text.trim();
+                                if (name.isEmpty) {
+                                  ScaffoldMessenger.of(dialogContext)
+                                      .showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Channel name is required'),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                                  return;
+                                }
+                                try {
+                                  final data = await ApiService.post(
+                                    '/channels',
+                                    {
+                                      'name': name,
+                                      'description': descCtrl.text.trim(),
+                                      'workspace': selectedWorkspaceId,
+                                      'isPrivate': isPrivate,
+                                    },
+                                  );
+
+                                  final newChannel = Channel.fromJson(data);
+
+                                  if (!mounted) return;
+                                  Navigator.pop(dialogContext, true);
+
+                                  await _loadChannels(selectedWorkspaceId!);
+
+                                  if (!mounted) return;
+                                  setState(() => selectedChannel = newChannel);
+
+                                  if (_scaffoldKey.currentState?.isDrawerOpen ??
+                                      false) {
+                                    Navigator.of(context).pop();
+                                  }
+                                } catch (e) {
+                                  _showError(e.toString());
+                                }
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.transparent,
+                                shadowColor: Colors.transparent,
+                                minimumSize: const Size.fromHeight(50),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                              ),
+                              child: const Text(
+                                'Create',
+                                style: TextStyle(
+                                  color: _white,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    nameCtrl.dispose();
+    descCtrl.dispose();
+  }
+
   Future<void> _createWorkspace() async {
     final result = await _showWorkspaceDialog(
       title: 'Create Workspace',
@@ -922,7 +1233,7 @@ class _HomeScreenState extends State<HomeScreen> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(14, 14, 14, 18),
             children: [
-              _sectionLabel('CHANNELS'),
+              _channelsHeader(),
               const SizedBox(height: 8),
               if (channels.isEmpty)
                 _emptyListTile('No channels yet')
@@ -1185,6 +1496,37 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: selectedWorkspaceId == null
                 ? null
                 : () => _openNewDirectMessageDialog(currentUserId),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _channelsHeader() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(6, 0, 0, 0),
+      child: Row(
+        children: [
+          const Expanded(
+            child: Text(
+              'CHANNELS',
+              style: TextStyle(
+                fontSize: 11,
+                color: _textMuted,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.1,
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Create channel',
+            icon: const Icon(
+              Icons.add_box_outlined,
+              size: 18,
+              color: _primary,
+            ),
+            onPressed:
+                selectedWorkspaceId == null ? null : _openCreateChannelDialog,
           ),
         ],
       ),
