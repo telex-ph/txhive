@@ -38,35 +38,72 @@ router.get('/dms', protect, async (req, res) => {
   }
 });
 
-// POST /api/channels - create channel
+const uniqueIds = (items) => {
+  return [...new Set((items || []).map((item) => item.toString()))];
+};
+
 router.post('/', protect, async (req, res) => {
   try {
-    const { name, description, workspace, isPrivate } = req.body;
+    const { name, description, workspace, isPrivate, memberIds } = req.body;
 
     const ws = await Workspace.findById(workspace);
     if (!ws) return res.status(404).json({ message: 'Workspace not found' });
 
-    const isMember = ws.members.some((m) => m.user.toString() === req.user._id.toString());
-    if (!isMember) return res.status(403).json({ message: 'Not a member of workspace' });
+    const workspaceMemberIds = ws.members.map((m) => m.user.toString());
+
+    const isMember = workspaceMemberIds.includes(req.user._id.toString());
+    if (!isMember) {
+      return res.status(403).json({ message: 'Not a member of workspace' });
+    }
+
+    const cleanedName = String(name || '')
+      .trim()
+      .replace(/^#+\s*/, '')
+      .toLowerCase()
+      .replace(/\s+/g, '-');
+
+    if (!cleanedName) {
+      return res.status(400).json({ message: 'Channel name is required' });
+    }
+
+    let channelMembers;
+
+    if (isPrivate) {
+      const requestedMembers = uniqueIds(memberIds);
+      const allowedRequestedMembers = requestedMembers.filter((id) =>
+        workspaceMemberIds.includes(id)
+      );
+
+      channelMembers = uniqueIds([
+        req.user._id.toString(),
+        ...allowedRequestedMembers,
+      ]);
+    } else {
+      channelMembers = workspaceMemberIds;
+    }
 
     const channel = await Channel.create({
-      name: name.toLowerCase().replace(/\s+/g, '-'),
+      name: cleanedName,
       description,
       type: 'channel',
       workspace,
       isPrivate: !!isPrivate,
-      members: isPrivate ? [req.user._id] : ws.members.map((m) => m.user),
+      members: channelMembers,
       admins: [req.user._id],
       createdBy: req.user._id,
     });
 
-    res.status(201).json(channel);
+    const populated = await Channel.findById(channel._id)
+      .populate('members', 'name email avatar status')
+      .populate('admins', 'name email avatar status')
+      .populate('createdBy', 'name email avatar status');
+
+    res.status(201).json(populated);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
 
-// POST /api/channels/dm - start or get 1-on-1 DM
 // POST /api/channels/dm - start or get 1-on-1 DM
 router.post('/dm', protect, async (req, res) => {
   try {
@@ -264,25 +301,17 @@ const updateChannel = async (req, res) => {
     if (isPrivate !== undefined) {
       const nextIsPrivate = Boolean(isPrivate);
 
-      // Public -> Private:
-      // Since wala ka pang invite/manage members UI, gawin muna private
-      // sa current user + creator. Existing private members are preserved
-      // kapag private na siya dati.
       if (nextIsPrivate && !channel.isPrivate) {
-        const privateMembers = [
-          req.user._id.toString(),
-          channel.createdBy.toString(),
-        ];
-
-        channel.members = [...new Set(privateMembers)];
+        channel.members = normalizeIdList([
+          channel.createdBy,
+          req.user._id,
+          ...(channel.admins || []),
+        ]);
       }
 
-      // Private/Public -> Public:
-      // Lahat ng workspace members magiging members ng channel.
       if (!nextIsPrivate) {
-        channel.members = workspace.members
-          .map((member) => getMemberUserId(member))
-          .filter(Boolean);
+        const workspace = await Workspace.findById(channel.workspace);
+        channel.members = getWorkspaceMemberIds(workspace);
       }
 
       channel.isPrivate = nextIsPrivate;
@@ -376,59 +405,290 @@ const toId = (value) => {
   return value.toString();
 };
 
+const normalizeIdList = (items) => {
+  return [...new Set(((items || []).map((item) => toId(item))).filter(Boolean))];
+};
+
 const isChannelOwnerOrAdmin = (channel, userId) => {
   const currentUserId = toId(userId);
   const ownerId = toId(channel.createdBy);
-
-  const adminIds = (channel.admins || []).map((admin) => toId(admin));
+  const adminIds = normalizeIdList(channel.admins);
 
   return ownerId === currentUserId || adminIds.includes(currentUserId);
 };
 
-// DELETE /api/channels/:id
-router.delete('/:id', protect, async (req, res) => {
+const isChannelMember = (channel, userId) => {
+  const currentUserId = toId(userId);
+  const memberIds = normalizeIdList(channel.members);
+
+  return memberIds.includes(currentUserId);
+};
+
+const getWorkspaceMemberIds = (workspace) => {
+  return workspace.members
+    .map((member) => toId(member.user || member))
+    .filter(Boolean);
+};
+
+// GET /api/channels/:id/members
+// Returns current channel members + workspace members para sa checkbox UI.
+router.get('/:id/members', protect, async (req, res) => {
   try {
-    const channel = await Channel.findById(req.params.id);
+    const channel = await Channel.findById(req.params.id)
+      .populate('members', 'name email avatar status')
+      .populate('admins', 'name email avatar status')
+      .populate('createdBy', 'name email avatar status');
 
     if (!channel) {
-      return res.status(404).json({
-        message: 'Channel not found',
-      });
+      return res.status(404).json({ message: 'Channel not found' });
     }
 
     if (channel.type !== 'channel') {
       return res.status(400).json({
-        message: 'Only workspace channels can be deleted',
+        message: 'Only workspace channels have member settings',
+      });
+    }
+
+    const canView =
+      !channel.isPrivate ||
+      isChannelMember(channel, req.user._id) ||
+      isChannelOwnerOrAdmin(channel, req.user._id);
+
+    if (!canView) {
+      return res.status(403).json({
+        message: 'You do not have access to this private channel',
+      });
+    }
+
+    const workspace = await Workspace.findById(channel.workspace).populate(
+      'members.user',
+      'name email avatar status'
+    );
+
+    if (!workspace) {
+      return res.status(404).json({ message: 'Workspace not found' });
+    }
+
+    const workspaceMembers = workspace.members
+      .map((member) => member.user)
+      .filter(Boolean);
+
+    return res.json({
+      channel,
+      members: channel.members,
+      admins: channel.admins,
+      createdBy: channel.createdBy,
+      workspaceMembers,
+      canManage: isChannelOwnerOrAdmin(channel, req.user._id),
+    });
+  } catch (err) {
+    console.error('Get channel members error:', err);
+    return res.status(500).json({
+      message: err.message || 'Failed to load channel members',
+    });
+  }
+});
+
+// PUT /api/channels/:id/members
+// Bulk update ng private channel members.
+router.put('/:id/members', protect, async (req, res) => {
+  try {
+    const { memberIds } = req.body;
+
+    const channel = await Channel.findById(req.params.id);
+
+    if (!channel) {
+      return res.status(404).json({ message: 'Channel not found' });
+    }
+
+    if (channel.type !== 'channel') {
+      return res.status(400).json({
+        message: 'Only workspace channels can be updated',
       });
     }
 
     if (!isChannelOwnerOrAdmin(channel, req.user._id)) {
       return res.status(403).json({
-        message: 'Only the channel owner or channel admin can delete this channel',
+        message: 'Only channel owner or channel admin can manage members',
       });
     }
 
-    await Message.deleteMany({ channel: channel._id });
-    await Channel.findByIdAndDelete(channel._id);
+    if (!channel.isPrivate) {
+      return res.status(400).json({
+        message: 'Specific member control is only available for private channels',
+      });
+    }
+
+    const workspace = await Workspace.findById(channel.workspace);
+
+    if (!workspace) {
+      return res.status(404).json({ message: 'Workspace not found' });
+    }
+
+    const workspaceMemberIds = getWorkspaceMemberIds(workspace);
+    const requestedMemberIds = normalizeIdList(memberIds);
+
+    const allowedMemberIds = requestedMemberIds.filter((id) =>
+      workspaceMemberIds.includes(id)
+    );
+
+    // Owner/admin/current user should not accidentally lose access.
+    const requiredMemberIds = normalizeIdList([
+      channel.createdBy,
+      req.user._id,
+      ...(channel.admins || []),
+    ]);
+
+    channel.members = normalizeIdList([
+      ...allowedMemberIds,
+      ...requiredMemberIds,
+    ]);
+
+    await channel.save();
+
+    const updatedChannel = await Channel.findById(channel._id)
+      .populate('members', 'name email avatar status')
+      .populate('admins', 'name email avatar status')
+      .populate('createdBy', 'name email avatar status');
 
     const io = req.app.get('io');
 
     if (io && channel.workspace) {
-      io.to(channel.workspace.toString()).emit('channel:deleted', {
-        _id: channel._id.toString(),
-        workspaceId: channel.workspace.toString(),
+      io.to(channel.workspace.toString()).emit('channel:updated', updatedChannel);
+    }
+
+    return res.json(updatedChannel);
+  } catch (err) {
+    console.error('Update channel members error:', err);
+    return res.status(500).json({
+      message: err.message || 'Failed to update channel members',
+    });
+  }
+});
+
+// POST /api/channels/:id/members
+// Add one member.
+router.post('/:id/members', protect, async (req, res) => {
+  try {
+    const { userId } = req.body;
+
+    const channel = await Channel.findById(req.params.id);
+
+    if (!channel) {
+      return res.status(404).json({ message: 'Channel not found' });
+    }
+
+    if (!isChannelOwnerOrAdmin(channel, req.user._id)) {
+      return res.status(403).json({
+        message: 'Only channel owner or channel admin can add members',
       });
     }
 
-    return res.json({
-      message: 'Channel deleted',
-      _id: channel._id.toString(),
-    });
-  } catch (err) {
-    console.error('Delete channel error:', err);
+    if (!channel.isPrivate) {
+      return res.status(400).json({
+        message: 'Specific member control is only available for private channels',
+      });
+    }
 
+    const workspace = await Workspace.findById(channel.workspace);
+
+    if (!workspace) {
+      return res.status(404).json({ message: 'Workspace not found' });
+    }
+
+    const workspaceMemberIds = getWorkspaceMemberIds(workspace);
+
+    if (!workspaceMemberIds.includes(userId.toString())) {
+      return res.status(400).json({
+        message: 'User must be a member of the workspace first',
+      });
+    }
+
+    const currentMembers = normalizeIdList(channel.members);
+    channel.members = normalizeIdList([...currentMembers, userId]);
+
+    await channel.save();
+
+    const updatedChannel = await Channel.findById(channel._id)
+      .populate('members', 'name email avatar status')
+      .populate('admins', 'name email avatar status')
+      .populate('createdBy', 'name email avatar status');
+
+    const io = req.app.get('io');
+
+    if (io && channel.workspace) {
+      io.to(channel.workspace.toString()).emit('channel:updated', updatedChannel);
+    }
+
+    return res.json(updatedChannel);
+  } catch (err) {
+    console.error('Add channel member error:', err);
     return res.status(500).json({
-      message: err.message || 'Failed to delete channel',
+      message: err.message || 'Failed to add channel member',
+    });
+  }
+});
+
+// DELETE /api/channels/:id/members/:userId
+// Remove one member.
+router.delete('/:id/members/:userId', protect, async (req, res) => {
+  try {
+    const channel = await Channel.findById(req.params.id);
+
+    if (!channel) {
+      return res.status(404).json({ message: 'Channel not found' });
+    }
+
+    if (!isChannelOwnerOrAdmin(channel, req.user._id)) {
+      return res.status(403).json({
+        message: 'Only channel owner or channel admin can remove members',
+      });
+    }
+
+    if (!channel.isPrivate) {
+      return res.status(400).json({
+        message: 'Specific member control is only available for private channels',
+      });
+    }
+
+    const removeUserId = req.params.userId.toString();
+
+    if (toId(channel.createdBy) === removeUserId) {
+      return res.status(400).json({
+        message: 'Channel owner cannot be removed',
+      });
+    }
+
+    const adminIds = normalizeIdList(channel.admins);
+
+    if (adminIds.includes(removeUserId)) {
+      return res.status(400).json({
+        message: 'Channel admin cannot be removed. Remove admin role first.',
+      });
+    }
+
+    channel.members = normalizeIdList(channel.members).filter(
+      (memberId) => memberId !== removeUserId
+    );
+
+    await channel.save();
+
+    const updatedChannel = await Channel.findById(channel._id)
+      .populate('members', 'name email avatar status')
+      .populate('admins', 'name email avatar status')
+      .populate('createdBy', 'name email avatar status');
+
+    const io = req.app.get('io');
+
+    if (io && channel.workspace) {
+      io.to(channel.workspace.toString()).emit('channel:updated', updatedChannel);
+    }
+
+    return res.json(updatedChannel);
+  } catch (err) {
+    console.error('Remove channel member error:', err);
+    return res.status(500).json({
+      message: err.message || 'Failed to remove channel member',
     });
   }
 });

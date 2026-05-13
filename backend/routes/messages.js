@@ -4,6 +4,7 @@ const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const cloudinary = require('cloudinary').v2;
 const Message = require('../models/Message');
 const Channel = require('../models/Channel');
+const Workspace = require('../models/Workspace');
 const { protect } = require('../middleware/auth');
 const { checkAndTriggerEod } = require('../services/eodSummarizer');
 
@@ -25,56 +26,135 @@ const storage = new CloudinaryStorage({
 
 const upload = multer({ storage });
 
+const toId = (value) => {
+  if (!value) return '';
+
+  if (value._id) {
+    return value._id.toString();
+  }
+
+  return value.toString();
+};
+
+const isWorkspaceMember = async (workspaceId, userId) => {
+  if (!workspaceId) return false;
+
+  const workspace = await Workspace.findById(workspaceId);
+
+  if (!workspace) return false;
+
+  return workspace.members.some((member) => {
+    const memberUser = member.user || member;
+    return toId(memberUser) === toId(userId);
+  });
+};
+
+const canAccessChannel = async (channel, userId) => {
+  if (!channel) return false;
+
+  const currentUserId = toId(userId);
+  const memberIds = (channel.members || []).map((member) => toId(member));
+
+  if (channel.type === 'dm' || channel.type === 'group') {
+    return memberIds.includes(currentUserId);
+  }
+
+  if (channel.isPrivate) {
+    return memberIds.includes(currentUserId);
+  }
+
+  if (memberIds.includes(currentUserId)) {
+    return true;
+  }
+
+  return await isWorkspaceMember(channel.workspace, currentUserId);
+};
+
+// GET /api/messages/:channelId?page=1&limit=50
 // GET /api/messages/:channelId?page=1&limit=50
 router.get('/:channelId', protect, async (req, res) => {
   try {
-    const channel = await Channel.findOne({
-      _id: req.params.channelId,
-      members: req.user._id,
-    });
+    const channelId = req.params.channelId;
+
+    const channel = await Channel.findById(channelId);
 
     if (!channel) {
+      return res.status(404).json({
+        message: 'Channel not found',
+      });
+    }
+
+    const allowed = await canAccessChannel(channel, req.user._id);
+
+    if (!allowed) {
       return res.status(403).json({
         message: 'You do not have access to this conversation',
       });
     }
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 50;
+
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 50;
     const skip = (page - 1) * limit;
 
-    const messages = await Message.find({ channel: req.params.channelId, deleted: false })
+    const messages = await Message.find({
+      channel: channelId,
+      deleted: false,
+    })
       .populate('sender', 'name email avatar')
-      .populate({ path: 'replyTo', populate: { path: 'sender', select: 'name avatar' } })
+      .populate({
+        path: 'replyTo',
+        populate: {
+          path: 'sender',
+          select: 'name avatar',
+        },
+      })
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit);
 
-    res.json(messages.reverse());
+    return res.json(messages.reverse());
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error('❌ Load messages error:', err);
+
+    return res.status(500).json({
+      message: err.message || 'Failed to load messages',
+    });
   }
 });
 
 // POST /api/messages - send message (also broadcast via socket + auto-trigger EOD)
+// POST /api/messages - send message
 router.post('/', protect, async (req, res) => {
   try {
-    const channel = await Channel.findOne({
-      _id: req.body.channel,
-      members: req.user._id,
-    });
+    const { channel: channelId, content, attachments, replyTo } = req.body;
+
+    if (!channelId) {
+      return res.status(400).json({
+        message: 'Channel is required',
+      });
+    }
+
+    const channel = await Channel.findById(channelId);
 
     if (!channel) {
+      return res.status(404).json({
+        message: 'Channel not found',
+      });
+    }
+
+    const allowed = await canAccessChannel(channel, req.user._id);
+
+    if (!allowed) {
       return res.status(403).json({
         message: 'You cannot send messages to this conversation',
       });
     }
 
-    const { content, attachments, replyTo } = req.body;
     if (!content && (!attachments || attachments.length === 0)) {
-      return res.status(400).json({ message: 'Content or attachment required' });
+      return res.status(400).json({
+        message: 'Content or attachment required',
+      });
     }
-
-    const channelId = channel._id.toString();
 
     let message = await Message.create({
       channel: channelId,
@@ -85,10 +165,14 @@ router.post('/', protect, async (req, res) => {
     });
 
     message = await message.populate('sender', 'name email avatar');
+
     if (replyTo) {
       message = await message.populate({
         path: 'replyTo',
-        populate: { path: 'sender', select: 'name avatar' },
+        populate: {
+          path: 'sender',
+          select: 'name avatar',
+        },
       });
     }
 
@@ -100,14 +184,20 @@ router.post('/', protect, async (req, res) => {
     const payload = JSON.parse(JSON.stringify(message));
 
     const io = req.app.get('io');
-    const roomName = `channel:${channelId}`;
-    const roomSize = io.sockets.adapter.rooms.get(roomName)?.size || 0;
-    console.log(`📢 Broadcasting to ${roomName} | sockets in room: ${roomSize}`);
-    io.to(roomName).emit('message:new', payload);
+
+    if (io) {
+      const roomName = `channel:${channelId}`;
+      const roomSize = io.sockets.adapter.rooms.get(roomName)?.size || 0;
+
+      console.log(
+        `📢 Broadcasting to ${roomName} | sockets in room: ${roomSize}`
+      );
+
+      io.to(roomName).emit('message:new', payload);
+    }
 
     res.status(201).json(payload);
 
-    // 🎯 EOD auto-trigger (fire-and-forget — does not block response)
     if (channel.isEodChannel) {
       checkAndTriggerEod(channelId).catch((err) =>
         console.error('EOD auto-trigger error:', err.message)
@@ -115,7 +205,10 @@ router.post('/', protect, async (req, res) => {
     }
   } catch (err) {
     console.error('❌ Send message error:', err);
-    res.status(500).json({ message: err.message });
+
+    return res.status(500).json({
+      message: err.message || 'Failed to send message',
+    });
   }
 });
 

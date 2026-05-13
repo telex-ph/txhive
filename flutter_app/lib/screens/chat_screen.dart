@@ -237,7 +237,20 @@ class _ChatScreenState extends State<ChatScreen> {
       final data = await ApiService.get('/messages/${widget.channel.id}');
       messages = (data as List).map((m) => Message.fromJson(m)).toList();
     } catch (e) {
-      // ignore
+      debugPrint('❌ Load messages error: $e');
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString().replaceAll('Exception: ', '')),
+            backgroundColor: _dark,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => loading = false);
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());

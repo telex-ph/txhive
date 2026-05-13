@@ -38,6 +38,20 @@ class _HomeScreenState extends State<HomeScreen> {
     return value.trim().replaceFirst(RegExp(r'^#+\s*'), '');
   }
 
+  String _readId(dynamic value) {
+    if (value == null) return '';
+
+    if (value is Map) {
+      return (value['_id'] ?? value['id'] ?? '').toString();
+    }
+
+    return value.toString();
+  }
+
+  String _readUserName(Map user) {
+    return (user['name'] ?? user['email'] ?? 'Unknown User').toString();
+  }
+
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   static const Color _primary = Color(0xFFA10000);
@@ -55,6 +69,371 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _loadData();
+  }
+
+  Future<void> _openChannelMembersDialog(Channel channel) async {
+    if (selectedWorkspaceId == null) return;
+
+    if (!channel.isPrivate) {
+      _showError(
+          'Specific member control is only available for private channels');
+      return;
+    }
+
+    Map<String, dynamic> data;
+
+    try {
+      data = Map<String, dynamic>.from(
+        await ApiService.get('/channels/${channel.id}/members'),
+      );
+    } catch (e) {
+      _showError(e.toString());
+      return;
+    }
+
+    final canManage = data['canManage'] == true;
+
+    final workspaceMembers = ((data['workspaceMembers'] as List?) ?? [])
+        .whereType<Map>()
+        .map((m) => Map<String, dynamic>.from(m))
+        .toList();
+
+    final currentMembers = ((data['members'] as List?) ?? [])
+        .map((m) => _readId(m))
+        .where((id) => id.isNotEmpty)
+        .toSet();
+
+    final createdById = _readId(data['createdBy']);
+    final adminIds = ((data['admins'] as List?) ?? [])
+        .map((m) => _readId(m))
+        .where((id) => id.isNotEmpty)
+        .toSet();
+
+    final selectedMemberIds = <String>{...currentMembers};
+    final searchCtrl = TextEditingController();
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        String query = '';
+        bool saving = false;
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final q = query.toLowerCase();
+
+            final filteredMembers = workspaceMembers.where((user) {
+              final name = (user['name'] ?? '').toString().toLowerCase();
+              final email = (user['email'] ?? '').toString().toLowerCase();
+
+              return q.isEmpty || name.contains(q) || email.contains(q);
+            }).toList();
+
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Container(
+                width: 500,
+                padding: const EdgeInsets.all(22),
+                decoration: BoxDecoration(
+                  color: _white,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.16),
+                      blurRadius: 28,
+                      offset: const Offset(0, 12),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(16),
+                            gradient: const LinearGradient(
+                              colors: [_primaryDark, _primary],
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.lock_person_outlined,
+                            color: _white,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Manage #${_cleanChannelName(channel.name)} members',
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: _textDark,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              Text(
+                                canManage
+                                    ? 'Choose who can access this private channel.'
+                                    : 'You can view members, but only owner/admin can update them.',
+                                style: const TextStyle(
+                                  color: _textMuted,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: saving
+                              ? null
+                              : () => Navigator.pop(dialogContext),
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: searchCtrl,
+                      decoration: InputDecoration(
+                        hintText: 'Search workspace members',
+                        prefixIcon: const Icon(
+                          Icons.search_rounded,
+                          color: _primary,
+                        ),
+                        filled: true,
+                        fillColor: _surface,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(18),
+                          borderSide: BorderSide.none,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(18),
+                          borderSide: const BorderSide(color: _border),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(18),
+                          borderSide: const BorderSide(
+                            color: _primary,
+                            width: 1.4,
+                          ),
+                        ),
+                      ),
+                      onChanged: (value) {
+                        setDialogState(() => query = value);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      height: 360,
+                      child: filteredMembers.isEmpty
+                          ? const Center(
+                              child: Text(
+                                'No members found',
+                                style: TextStyle(
+                                  color: _textMuted,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            )
+                          : ListView.builder(
+                              itemCount: filteredMembers.length,
+                              itemBuilder: (_, index) {
+                                final user = filteredMembers[index];
+                                final userId = _readId(user);
+                                final name = _readUserName(user);
+                                final email = (user['email'] ?? '').toString();
+                                final initial = name.isNotEmpty
+                                    ? name[0].toUpperCase()
+                                    : '?';
+
+                                final isOwner = userId == createdById;
+                                final isAdmin = adminIds.contains(userId);
+                                final isSelected =
+                                    selectedMemberIds.contains(userId);
+
+                                final locked = isOwner || isAdmin;
+
+                                return Container(
+                                  margin: const EdgeInsets.only(bottom: 10),
+                                  decoration: BoxDecoration(
+                                    color: _surface,
+                                    borderRadius: BorderRadius.circular(18),
+                                    border: Border.all(color: _border),
+                                  ),
+                                  child: CheckboxListTile(
+                                    value: isSelected,
+                                    activeColor: _primary,
+                                    onChanged: !canManage || locked
+                                        ? null
+                                        : (checked) {
+                                            setDialogState(() {
+                                              if (checked == true) {
+                                                selectedMemberIds.add(userId);
+                                              } else {
+                                                selectedMemberIds
+                                                    .remove(userId);
+                                              }
+                                            });
+                                          },
+                                    secondary: CircleAvatar(
+                                      backgroundColor: const Color(0xFFF2D7D7),
+                                      child: Text(
+                                        initial,
+                                        style: const TextStyle(
+                                          color: _primary,
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
+                                    ),
+                                    title: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            name,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              color: _textDark,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                        ),
+                                        if (isOwner)
+                                          _rolePill('Owner')
+                                        else if (isAdmin)
+                                          _rolePill('Admin'),
+                                      ],
+                                    ),
+                                    subtitle: email.isEmpty
+                                        ? null
+                                        : Text(
+                                            email,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              color: _textMuted,
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: saving
+                                ? null
+                                : () => Navigator.pop(dialogContext),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: _textDark,
+                              side: const BorderSide(color: _border),
+                              minimumSize: const Size.fromHeight(48),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                            ),
+                            child: const Text(
+                              'Cancel',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: !canManage || saving
+                                ? null
+                                : () async {
+                                    setDialogState(() => saving = true);
+
+                                    try {
+                                      await ApiService.put(
+                                        '/channels/${channel.id}/members',
+                                        {
+                                          'memberIds':
+                                              selectedMemberIds.toList(),
+                                        },
+                                      );
+
+                                      await _refreshChannelsAfterChange(
+                                        channel.id,
+                                      );
+
+                                      if (!mounted) return;
+
+                                      Navigator.pop(dialogContext);
+                                    } catch (e) {
+                                      _showError(e.toString());
+                                      setDialogState(() => saving = false);
+                                    }
+                                  },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _primary,
+                              foregroundColor: _white,
+                              minimumSize: const Size.fromHeight(48),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                            ),
+                            child: saving
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: _white,
+                                    ),
+                                  )
+                                : const Text(
+                                    'Save members',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    searchCtrl.dispose();
+  }
+
+  Widget _rolePill(String label) {
+    return Container(
+      margin: const EdgeInsets.only(left: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFBEAEA),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFFF2CACA)),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: _primary,
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
   }
 
   Future<void> _loadData() async {
@@ -1648,6 +2027,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     onTap: () => _selectChannel(c),
                     onSettings:
                         canManage ? () => _openChannelSettingsDialog(c) : null,
+                    onMembers:
+                        c.isPrivate ? () => _openChannelMembersDialog(c) : null,
                     onEodSettings: () => _openEodSettingsFor(c),
                     onDelete: canManage ? () => _confirmDeleteChannel(c) : null,
                   );
@@ -1725,6 +2106,7 @@ class _HomeScreenState extends State<HomeScreen> {
     required bool selected,
     required VoidCallback onTap,
     VoidCallback? onSettings,
+    VoidCallback? onMembers,
     VoidCallback? onEodSettings,
     VoidCallback? onDelete,
   }) {
@@ -1783,6 +2165,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       case 'delete':
                         onDelete?.call();
                         break;
+                      case 'members':
+                        onMembers?.call();
+                        break;
                     }
                   },
                   itemBuilder: (_) => [
@@ -1794,6 +2179,17 @@ class _HomeScreenState extends State<HomeScreen> {
                             Icon(Icons.settings_outlined, size: 18),
                             SizedBox(width: 10),
                             Text('Channel settings'),
+                          ],
+                        ),
+                      ),
+                    if (onMembers != null)
+                      const PopupMenuItem(
+                        value: 'members',
+                        child: Row(
+                          children: [
+                            Icon(Icons.lock_person_outlined, size: 18),
+                            SizedBox(width: 10),
+                            Text('Manage members'),
                           ],
                         ),
                       ),
