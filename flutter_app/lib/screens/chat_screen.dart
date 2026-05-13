@@ -7,6 +7,15 @@ import '../services/api_service.dart';
 import '../services/socket_service.dart';
 import '../providers/auth_provider.dart';
 import 'dart:async';
+import 'package:flutter/services.dart';
+
+class SendMessageIntent extends Intent {
+  const SendMessageIntent();
+}
+
+class InsertNewLineIntent extends Intent {
+  const InsertNewLineIntent();
+}
 
 class ChatScreen extends StatefulWidget {
   final Channel channel;
@@ -21,6 +30,8 @@ class _ChatScreenState extends State<ChatScreen> {
   void Function(dynamic)? _onMessageDeleted;
   void Function(dynamic)? _onTypingStart;
   void Function(dynamic)? _onTypingStop;
+  void Function(dynamic)? _onMessageUpdated;
+
   final _msgCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
   final Map<String, Timer> _typingTimers = {};
@@ -49,13 +60,14 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
-    // ✅ I-cancel lahat ng typing timers
     for (final timer in _typingTimers.values) {
       timer.cancel();
     }
     _typingTimers.clear();
 
     if (_onMessageNew != null) SocketService.off('message:new', _onMessageNew!);
+    if (_onMessageUpdated != null)
+      SocketService.off('message:updated', _onMessageUpdated!);
     if (_onMessageDeleted != null)
       SocketService.off('message:deleted', _onMessageDeleted!);
     if (_onTypingStart != null)
@@ -66,6 +78,68 @@ class _ChatScreenState extends State<ChatScreen> {
     _msgCtrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
+  }
+
+  Map<String, dynamic> _asMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return <String, dynamic>{};
+  }
+
+  Message _messageFromPayload(dynamic payload) {
+    final map = _asMap(payload);
+    final rawMessage = map['message'] ?? map;
+
+    return Message.fromJson(
+      Map<String, dynamic>.from(rawMessage as Map),
+    );
+  }
+
+  String _messageIdFromPayload(dynamic payload) {
+    if (payload is String) return payload;
+
+    final map = _asMap(payload);
+    final rawMessage = map['message'];
+    final messageMap =
+        rawMessage is Map ? Map<String, dynamic>.from(rawMessage) : null;
+
+    return (map['_id'] ??
+            map['id'] ??
+            map['messageId'] ??
+            messageMap?['_id'] ??
+            messageMap?['id'] ??
+            '')
+        .toString();
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: _dark,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+      ),
+    );
+  }
+
+  void _insertNewLine() {
+    final text = _msgCtrl.text;
+    final selection = _msgCtrl.selection;
+
+    final start = selection.start < 0 ? text.length : selection.start;
+    final end = selection.end < 0 ? text.length : selection.end;
+
+    final nextText = text.replaceRange(start, end, '\n');
+
+    _msgCtrl.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: start + 1),
+    );
   }
 
   void _setupSocket() {
@@ -86,9 +160,37 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     };
 
+    _onMessageUpdated = (data) {
+      if (!mounted) return;
+
+      try {
+        final updatedMessage = _messageFromPayload(data);
+
+        if (updatedMessage.channelId != widget.channel.id) return;
+
+        setState(() {
+          final index = messages.indexWhere((m) => m.id == updatedMessage.id);
+
+          if (index != -1) {
+            messages[index] = updatedMessage;
+          } else {
+            messages.add(updatedMessage);
+          }
+        });
+      } catch (e) {
+        debugPrint('❌ Error parsing socket message:updated: $e');
+      }
+    };
+
     _onMessageDeleted = (data) {
       if (!mounted) return;
-      setState(() => messages.removeWhere((m) => m.id == data['_id']));
+
+      final id = _messageIdFromPayload(data);
+      if (id.isEmpty) return;
+
+      setState(() {
+        messages.removeWhere((m) => m.id == id);
+      });
     };
 
     _onTypingStart = (data) {
@@ -123,6 +225,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     // ✅ I-register ang mga stored handlers
     SocketService.on('message:new', _onMessageNew!);
+    SocketService.on('message:updated', _onMessageUpdated!);
     SocketService.on('message:deleted', _onMessageDeleted!);
     SocketService.on('typing:start', _onTypingStart!);
     SocketService.on('typing:stop', _onTypingStop!);
@@ -186,6 +289,137 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> _copyMessage(Message message) async {
+    await Clipboard.setData(
+      ClipboardData(text: message.content),
+    );
+
+    _showSnack('Message copied');
+  }
+
+  Future<void> _openEditMessageDialog(Message message) async {
+    final ctrl = TextEditingController(text: message.content);
+
+    final updatedText = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Edit message'),
+          content: TextField(
+            controller: ctrl,
+            autofocus: true,
+            minLines: 1,
+            maxLines: 6,
+            decoration: const InputDecoration(
+              hintText: 'Update your message',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, ctrl.text),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _primary,
+              ),
+              child: const Text(
+                'Save',
+                style: TextStyle(color: _white),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    ctrl.dispose();
+
+    if (updatedText == null) return;
+
+    await _editMessage(message, updatedText);
+  }
+
+  Future<void> _editMessage(Message message, String value) async {
+    final text = value.trim();
+
+    if (text.isEmpty) return;
+    if (text == message.content.trim()) return;
+
+    try {
+      final data = await ApiService.put(
+        '/messages/${message.id}',
+        {
+          'content': text,
+        },
+      );
+
+      final updatedMessage = _messageFromPayload(data);
+
+      if (!mounted) return;
+
+      setState(() {
+        final index = messages.indexWhere((m) => m.id == updatedMessage.id);
+
+        if (index != -1) {
+          messages[index] = updatedMessage;
+        }
+      });
+    } catch (e) {
+      _showSnack(e.toString().replaceAll('Exception: ', ''));
+    }
+  }
+
+  Future<void> _confirmDeleteMessage(Message message) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Delete message?'),
+          content: const Text(
+            'This message will be deleted from the conversation.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+              ),
+              child: const Text(
+                'Delete',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed == true) {
+      await _deleteMessage(message);
+    }
+  }
+
+  Future<void> _deleteMessage(Message message) async {
+    try {
+      await ApiService.delete('/messages/${message.id}');
+
+      if (!mounted) return;
+
+      setState(() {
+        messages.removeWhere((m) => m.id == message.id);
+      });
+    } catch (e) {
+      _showSnack(e.toString().replaceAll('Exception: ', ''));
+    }
+  }
+
   void _scrollToBottom() {
     if (!_scrollCtrl.hasClients) return;
     _scrollCtrl.animateTo(
@@ -223,9 +457,18 @@ class _ChatScreenState extends State<ChatScreen> {
                           itemCount: messages.length,
                           itemBuilder: (_, i) {
                             final message = messages[i];
+                            final isMe = message.sender.id == currentUserId;
+
                             return _MessageBubble(
                               message: message,
-                              isMe: message.sender.id == currentUserId,
+                              isMe: isMe,
+                              onCopy: () => _copyMessage(message),
+                              onEdit: isMe
+                                  ? () => _openEditMessageDialog(message)
+                                  : null,
+                              onDelete: isMe
+                                  ? () => _confirmDeleteMessage(message)
+                                  : null,
                             );
                           },
                         ),
@@ -418,32 +661,57 @@ class _ChatScreenState extends State<ChatScreen> {
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: _border),
                 ),
-                child: TextField(
-                  controller: _msgCtrl,
-                  minLines: 1,
-                  maxLines: 4,
-                  decoration: InputDecoration(
-                    hintText: widget.channel.type == 'channel'
-                        ? 'Message #${widget.channel.name}'
-                        : 'Type a message...',
-                    hintStyle: const TextStyle(
-                      color: _textMuted,
-                      fontSize: 14,
+                child: Actions(
+                  actions: <Type, Action<Intent>>{
+                    SendMessageIntent: CallbackAction<SendMessageIntent>(
+                      onInvoke: (_) {
+                        _sendMessage();
+                        return null;
+                      },
                     ),
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 13,
+                    InsertNewLineIntent: CallbackAction<InsertNewLineIntent>(
+                      onInvoke: (_) {
+                        _insertNewLine();
+                        return null;
+                      },
+                    ),
+                  },
+                  child: Shortcuts(
+                    shortcuts: <ShortcutActivator, Intent>{
+                      const SingleActivator(LogicalKeyboardKey.enter):
+                          const SendMessageIntent(),
+                      const SingleActivator(LogicalKeyboardKey.enter,
+                          shift: true): const InsertNewLineIntent(),
+                    },
+                    child: TextField(
+                      controller: _msgCtrl,
+                      minLines: 1,
+                      maxLines: 4,
+                      textInputAction: TextInputAction.send,
+                      decoration: InputDecoration(
+                        hintText: widget.channel.type == 'channel'
+                            ? 'Message #${widget.channel.name}'
+                            : 'Type a message...',
+                        hintStyle: const TextStyle(
+                          color: _textMuted,
+                          fontSize: 14,
+                        ),
+                        border: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 13,
+                        ),
+                      ),
+                      onChanged: (v) {
+                        if (v.isNotEmpty) {
+                          SocketService.typingStart(widget.channel.id);
+                        } else {
+                          SocketService.typingStop(widget.channel.id);
+                        }
+                      },
+                      onSubmitted: (_) => _sendMessage(),
                     ),
                   ),
-                  onChanged: (v) {
-                    if (v.isNotEmpty) {
-                      SocketService.typingStart(widget.channel.id);
-                    } else {
-                      SocketService.typingStop(widget.channel.id);
-                    }
-                  },
-                  onSubmitted: (_) => _sendMessage(),
                 ),
               ),
             ),
@@ -488,10 +756,16 @@ class _ChatScreenState extends State<ChatScreen> {
 class _MessageBubble extends StatelessWidget {
   final Message message;
   final bool isMe;
+  final VoidCallback onCopy;
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
 
   const _MessageBubble({
     required this.message,
     required this.isMe,
+    required this.onCopy,
+    this.onEdit,
+    this.onDelete,
   });
 
   static const Color _primary = Color(0xFFA10000);
@@ -508,6 +782,69 @@ class _MessageBubble extends StatelessWidget {
     final initial = message.sender.name.isNotEmpty
         ? message.sender.name[0].toUpperCase()
         : '?';
+
+    final actionMenu = PopupMenuButton<String>(
+      tooltip: 'Message actions',
+      icon: Icon(
+        Icons.more_horiz_rounded,
+        color: isMe ? _primary : _textMuted,
+        size: 20,
+      ),
+      onSelected: (value) {
+        switch (value) {
+          case 'copy':
+            onCopy();
+            break;
+          case 'edit':
+            onEdit?.call();
+            break;
+          case 'delete':
+            onDelete?.call();
+            break;
+        }
+      },
+      itemBuilder: (_) => [
+        const PopupMenuItem(
+          value: 'copy',
+          child: Row(
+            children: [
+              Icon(Icons.copy_rounded, size: 18),
+              SizedBox(width: 10),
+              Text('Copy'),
+            ],
+          ),
+        ),
+        if (onEdit != null)
+          const PopupMenuItem(
+            value: 'edit',
+            child: Row(
+              children: [
+                Icon(Icons.edit_outlined, size: 18),
+                SizedBox(width: 10),
+                Text('Edit'),
+              ],
+            ),
+          ),
+        if (onDelete != null)
+          const PopupMenuItem(
+            value: 'delete',
+            child: Row(
+              children: [
+                Icon(
+                  Icons.delete_outline_rounded,
+                  size: 18,
+                  color: Colors.red,
+                ),
+                SizedBox(width: 10),
+                Text(
+                  'Delete',
+                  style: TextStyle(color: Colors.red),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
@@ -530,6 +867,7 @@ class _MessageBubble extends StatelessWidget {
             ),
             const SizedBox(width: 10),
           ],
+          if (isMe) actionMenu,
           ConstrainedBox(
             constraints: BoxConstraints(
               maxWidth: MediaQuery.of(context).size.width * 0.68,
@@ -569,7 +907,7 @@ class _MessageBubble extends StatelessWidget {
                         ),
                       ),
                     ),
-                  Text(
+                  SelectableText(
                     message.content,
                     style: TextStyle(
                       fontSize: 14.5,
@@ -611,6 +949,10 @@ class _MessageBubble extends StatelessWidget {
               ),
             ),
           ),
+          if (!isMe) ...[
+            const SizedBox(width: 4),
+            actionMenu,
+          ],
           if (isMe) const SizedBox(width: 2),
         ],
       ),

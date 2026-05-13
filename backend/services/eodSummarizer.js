@@ -8,10 +8,11 @@ const User = require('../models/User');
 const { getScheduledChannelMembers } = require('./trackioService');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// ✅ Updated to gemini-2.5-flash (2.0-flash deprecated March 2026)
 const model = genAI.getGenerativeModel({
-  model: 'gemini-2.0-flash',
+  model: 'gemini-2.5-flash',
   generationConfig: {
-    temperature: 0.3,
+    temperature: 0.2,
     responseMimeType: 'application/json',
   },
 });
@@ -21,7 +22,6 @@ const GHL_WEBHOOK_URL = process.env.GHL_EOD_WEBHOOK_URL || '';
 function getDayBoundaries(date, timezone = 'Asia/Manila') {
   const d = new Date(date);
   const tzOffsetMs = 8 * 60 * 60 * 1000;
-
   const manilaDate = new Date(d.getTime() + tzOffsetMs);
   const year = manilaDate.getUTCFullYear();
   const month = manilaDate.getUTCMonth();
@@ -31,7 +31,6 @@ function getDayBoundaries(date, timezone = 'Asia/Manila') {
   const endUTC = new Date(Date.UTC(year, month, day, 23, 59, 59, 999) - tzOffsetMs);
 
   const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-
   return { startUTC, endUTC, dateStr };
 }
 
@@ -46,67 +45,129 @@ function formatDisplayDate(dateStr) {
   });
 }
 
-async function summarizeIndividualEod(personName, combinedText) {
-  const prompt = `You are summarizing an End-of-Day report from a team member at Telex Business Support Services Inc.
+/**
+ * Wrapper with rate-limit aware retry
+ * Gemini 2.5 Flash free tier: 10 RPM, 500 RPD
+ */
+async function callGeminiWithRetry(prompt, maxRetries = 3) {
+  let lastError;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const result = await model.generateContent(prompt);
+      return result.response.text().trim();
+    } catch (err) {
+      lastError = err;
+      const isRateLimit = err.message?.includes('429') || err.message?.includes('Too Many Requests');
+      if (!isRateLimit || attempt === maxRetries - 1) throw err;
+
+      // Extract retry delay from error message, or default to exponential backoff
+      const retryMatch = err.message.match(/retry in ([\d.]+)s/);
+      const waitSec = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) + 2 : (attempt + 1) * 15;
+
+      console.log(`⏳ Rate limit hit. Waiting ${waitSec}s before retry ${attempt + 1}/${maxRetries}...`);
+      await new Promise((r) => setTimeout(r, waitSec * 1000));
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * Parse a person's raw EOD into project-grouped structure
+ */
+async function parseEodIntoProjects(personName, combinedText) {
+  const prompt = `You are an expert EOD report parser for the Innovation Department of Telex Business Support Services Inc.
 
 Team Member: ${personName}
 
-Their raw EOD message(s) for today:
+Their raw EOD message(s) for today (may include multiple sends throughout the day):
 ---
 ${combinedText}
 ---
 
-Generate a structured summary in valid JSON format with these exact keys:
+The EOD typically follows this structure (but may vary in formatting):
+- Tasks grouped by project/initiative (e.g., "Messaging App", "WanderWave", "HaidoVille", "TexionixBug Reporter")
+- Each project has: Done items and Pending items
+- There may be additional tasks not tied to a specific project
+
+Your job: Extract and organize their work into JSON with this EXACT structure:
 {
-  "summary": "2-3 sentence executive summary of what they accomplished",
-  "keyItems": ["bullet point 1", "bullet point 2"],
-  "blockers": ["blocker 1"],
-  "tomorrow": ["priority 1"]
+  "projects": [
+    {
+      "name": "Project name as mentioned (e.g., 'Messaging App (TxHive)')",
+      "done": ["specific accomplishment 1", "specific accomplishment 2"],
+      "pending": ["pending item 1", "pending item 2"]
+    }
+  ],
+  "additionalTasks": ["task not tied to a project 1", "task 2"],
+  "hasContent": true
 }
 
-Rules:
-- Be concise and professional
-- Extract specific accomplishments, projects, and tasks mentioned
-- If something is unclear, do not invent details
-- If they did not mention blockers, return empty array
-- If they did not mention tomorrow's plan, return empty array
-- Output ONLY valid JSON`;
+CRITICAL RULES:
+- Preserve the team member's actual project names (don't rename)
+- Extract SPECIFIC, concrete items — NEVER generic phrases like "worked on X"
+- Each bullet should be a complete, standalone statement (not a fragment)
+- If a project has only done items and no pending, return empty array for pending (and vice versa)
+- "additionalTasks" is for meetings, reviews, admin work, or anything NOT under a specific project
+- If the EOD message is unclear, malformed, or just a casual chat (not an actual EOD), set "hasContent": false and return empty arrays
+- DO NOT invent or pad content. If they only said 2 things, only output 2 things.
+- DO NOT lose information. Every specific task/item mentioned must appear somewhere in the output.
+- Preserve technical terminology, project names, and proper nouns exactly as written
+- Output ONLY valid JSON, no markdown`;
 
   try {
-    const result = await model.generateContent(prompt);
-    const text = result.response.text().trim();
+    const text = await callGeminiWithRetry(prompt);
     const cleaned = text.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-    return JSON.parse(cleaned);
-  } catch (err) {
-    console.error(`❌ Gemini error for ${personName}:`, err.message);
+    const parsed = JSON.parse(cleaned);
+
     return {
-      summary: combinedText.substring(0, 200) + (combinedText.length > 200 ? '...' : ''),
-      keyItems: [],
-      blockers: [],
-      tomorrow: [],
+      projects: Array.isArray(parsed.projects) ? parsed.projects : [],
+      additionalTasks: Array.isArray(parsed.additionalTasks) ? parsed.additionalTasks : [],
+      hasContent: parsed.hasContent !== false,
+    };
+  } catch (err) {
+    console.error(`❌ Gemini parse error for ${personName}:`, err.message);
+    return {
+      projects: [],
+      additionalTasks: [],
+      hasContent: false,
+      raw: combinedText.substring(0, 500),
     };
   }
 }
 
+/**
+ * Generate executive overview from all individual project breakdowns
+ */
 async function generateExecutiveSummary(individualSummaries, teamName) {
-  const allSummaries = individualSummaries
-    .map((s) => `- ${s.name}: ${s.summary}`)
-    .join('\n');
+  const consolidated = individualSummaries
+    .map((s) => {
+      const lines = [`${s.name}:`];
+      s.projects.forEach((p) => {
+        if (p.done && p.done.length > 0) {
+          lines.push(`  ${p.name}: ${p.done.join('; ')}`);
+        }
+      });
+      if (s.additionalTasks && s.additionalTasks.length > 0) {
+        lines.push(`  Other: ${s.additionalTasks.join('; ')}`);
+      }
+      return lines.join('\n');
+    })
+    .join('\n\n');
 
-  const prompt = `Based on these individual EOD summaries from the ${teamName} team at Telex Business Support Services Inc.:
+  const prompt = `Based on today's accomplishments from the ${teamName} team at Telex Business Support Services Inc.:
 
-${allSummaries}
+${consolidated}
 
-Write a 2-3 sentence executive overview of today's team activity. Focus on key wins, themes, and productivity.
+Write a 3-4 sentence executive overview that:
+1. Highlights the most significant team-wide accomplishments
+2. Identifies any common themes or projects that received major attention
+3. Mentions notable individual contributions if relevant
+4. Maintains a professional, leadership-focused tone (this is for department heads)
 
-Output ONLY valid JSON in this format:
-{
-  "overview": "Your 2-3 sentence overview here"
-}`;
+Output ONLY valid JSON: {"overview": "your 3-4 sentence overview"}`;
 
   try {
-    const result = await model.generateContent(prompt);
-    const text = result.response.text().trim();
+    const text = await callGeminiWithRetry(prompt);
     const cleaned = text.replace(/^```json\s*/, '').replace(/\s*```$/, '');
     const parsed = JSON.parse(cleaned);
     return parsed.overview;
@@ -114,6 +175,16 @@ Output ONLY valid JSON in this format:
     console.error('❌ Executive summary error:', err.message);
     return `The ${teamName} team submitted ${individualSummaries.length} EOD report(s) today.`;
   }
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function buildPdfHtml({
@@ -125,7 +196,7 @@ function buildPdfHtml({
   individualSummaries,
   missingMembers,
 }) {
-  const sections = individualSummaries
+  const personSections = individualSummaries
     .map((s) => {
       const initial = s.name.charAt(0).toUpperCase();
       const time = new Date(s.submittedAt).toLocaleTimeString('en-US', {
@@ -135,34 +206,65 @@ function buildPdfHtml({
         timeZone: 'Asia/Manila',
       });
 
-      const keyItemsHtml =
-        s.keyItems.length > 0
-          ? `<div class="section"><div class="section-title">Key Items</div><ul>${s.keyItems.map((i) => `<li>${escapeHtml(i)}</li>`).join('')}</ul></div>`
+      const projectsHtml =
+        s.projects.length > 0
+          ? s.projects
+              .map((p) => {
+                const doneList =
+                  p.done && p.done.length > 0
+                    ? `<div class="task-block">
+                        <div class="task-label done-label">✓ Done</div>
+                        <ul class="done-list">${p.done.map((i) => `<li>${escapeHtml(i)}</li>`).join('')}</ul>
+                      </div>`
+                    : '';
+                const pendingList =
+                  p.pending && p.pending.length > 0
+                    ? `<div class="task-block">
+                        <div class="task-label pending-label">⏳ Pending</div>
+                        <ul class="pending-list">${p.pending.map((i) => `<li>${escapeHtml(i)}</li>`).join('')}</ul>
+                      </div>`
+                    : '';
+                return `
+                  <div class="project-card">
+                    <div class="project-name">📌 ${escapeHtml(p.name)}</div>
+                    ${doneList}
+                    ${pendingList}
+                  </div>
+                `;
+              })
+              .join('')
           : '';
 
-      const blockersHtml =
-        s.blockers.length > 0
-          ? `<div class="section"><div class="section-title">Blockers</div><ul>${s.blockers.map((i) => `<li>${escapeHtml(i)}</li>`).join('')}</ul></div>`
+      const additionalHtml =
+        s.additionalTasks && s.additionalTasks.length > 0
+          ? `<div class="project-card additional">
+              <div class="project-name">📋 Additional Tasks</div>
+              <ul class="other-list">${s.additionalTasks.map((i) => `<li>${escapeHtml(i)}</li>`).join('')}</ul>
+            </div>`
           : '';
 
-      const tomorrowHtml =
-        s.tomorrow.length > 0
-          ? `<div class="section"><div class="section-title">Tomorrow's Priorities</div><ul>${s.tomorrow.map((i) => `<li>${escapeHtml(i)}</li>`).join('')}</ul></div>`
+      const noContentNotice =
+        !s.hasContent
+          ? `<div class="warning-block">⚠️ Unable to parse structured EOD content. Raw message:<br><em>${escapeHtml(s.raw || '')}</em></div>`
           : '';
 
       return `
-        <div class="person-card">
+        <div class="person-section">
           <div class="person-header">
             <div class="avatar">${initial}</div>
-            <div>
+            <div class="person-info">
               <div class="person-name">${escapeHtml(s.name)}</div>
               <div class="person-meta">Submitted at ${time}</div>
             </div>
           </div>
-          <div class="person-summary">${escapeHtml(s.summary)}</div>
-          ${keyItemsHtml}
-          ${blockersHtml}
-          ${tomorrowHtml}
+          ${noContentNotice}
+          ${projectsHtml}
+          ${additionalHtml}
+          ${
+            s.projects.length === 0 && (!s.additionalTasks || s.additionalTasks.length === 0) && s.hasContent
+              ? '<div class="empty-notice">No specific tasks or projects extracted.</div>'
+              : ''
+          }
         </div>
       `;
     })
@@ -179,32 +281,43 @@ function buildPdfHtml({
   return `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Segoe UI', Arial, sans-serif; color: #202020; background: #fff; padding: 40px; font-size: 13px; line-height: 1.5; }
-  .header { border-bottom: 3px solid #A10000; padding-bottom: 20px; margin-bottom: 30px; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; color: #202020; background: #fff; padding: 40px; font-size: 12.5px; line-height: 1.5; }
+  .header { border-bottom: 3px solid #A10000; padding-bottom: 20px; margin-bottom: 26px; }
   .company { font-size: 11px; color: #8A8A8F; letter-spacing: 1.5px; font-weight: 600; text-transform: uppercase; }
   .title { font-size: 28px; font-weight: 900; color: #A10000; margin: 6px 0; }
-  .meta { color: #5a5a5a; font-size: 13px; margin-top: 8px; }
+  .meta { color: #5a5a5a; font-size: 12.5px; margin-top: 8px; }
   .meta strong { color: #202020; }
-  .exec-summary { background: #FBEAEA; border-left: 4px solid #A10000; padding: 18px 22px; border-radius: 8px; margin-bottom: 30px; }
+  .exec-summary { background: #FBEAEA; border-left: 4px solid #A10000; padding: 16px 20px; border-radius: 8px; margin-bottom: 24px; }
   .exec-title { font-size: 11px; font-weight: 800; color: #A10000; letter-spacing: 1.2px; margin-bottom: 8px; }
-  .exec-text { color: #202020; line-height: 1.6; font-size: 13.5px; }
-  .divider { border-top: 2px solid #E9E9ED; margin: 30px 0 20px; padding-top: 14px; font-size: 11px; color: #8A8A8F; letter-spacing: 1.2px; font-weight: 800; }
-  .person-card { background: #fff; border: 1px solid #E9E9ED; border-radius: 12px; padding: 20px 22px; margin-bottom: 16px; page-break-inside: avoid; }
-  .person-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #F1F1F4; }
-  .avatar { width: 38px; height: 38px; border-radius: 50%; background: linear-gradient(135deg, #650000, #A10000); color: white; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 16px; }
-  .person-name { font-size: 15px; font-weight: 800; color: #202020; }
-  .person-meta { color: #8A8A8F; font-size: 11px; }
-  .person-summary { color: #202020; line-height: 1.55; margin-bottom: 12px; }
-  .section { margin-top: 10px; }
-  .section-title { font-size: 10.5px; font-weight: 800; color: #A10000; letter-spacing: 0.8px; text-transform: uppercase; margin-bottom: 5px; }
-  ul { margin-left: 18px; color: #303030; }
+  .exec-text { color: #202020; line-height: 1.6; font-size: 13px; }
+  .divider { border-top: 2px solid #E9E9ED; margin: 26px 0 18px; padding-top: 12px; font-size: 11px; color: #8A8A8F; letter-spacing: 1.2px; font-weight: 800; }
+  .person-section { margin-bottom: 22px; page-break-inside: avoid; }
+  .person-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 2px solid #F1F1F4; }
+  .avatar { width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #650000, #A10000); color: white; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 15px; flex-shrink: 0; }
+  .person-info { flex: 1; }
+  .person-name { font-size: 16px; font-weight: 900; color: #202020; }
+  .person-meta { color: #8A8A8F; font-size: 10.5px; margin-top: 2px; }
+  .project-card { background: #FAFAFC; border: 1px solid #E9E9ED; border-radius: 10px; padding: 12px 16px; margin-bottom: 10px; page-break-inside: avoid; }
+  .project-card.additional { background: #FFF8E5; border-color: #F0D88A; }
+  .project-name { font-size: 13px; font-weight: 800; color: #650000; margin-bottom: 8px; }
+  .additional .project-name { color: #8A6700; }
+  .task-block { margin-top: 6px; }
+  .task-label { font-size: 10px; font-weight: 800; letter-spacing: 0.6px; text-transform: uppercase; margin-bottom: 3px; }
+  .done-label { color: #1F7A1F; }
+  .pending-label { color: #C25F00; }
+  ul { margin-left: 18px; color: #303030; font-size: 12.5px; }
   ul li { margin-bottom: 3px; line-height: 1.5; }
-  .missing-section { background: #FFF8E5; border-left: 4px solid #F0B400; padding: 14px 18px; border-radius: 8px; margin-top: 20px; }
+  .done-list li::marker { color: #1F7A1F; }
+  .pending-list li::marker { color: #C25F00; }
+  .other-list li::marker { color: #8A6700; }
+  .empty-notice { color: #8A8A8F; font-style: italic; font-size: 12px; padding: 8px 12px; }
+  .warning-block { background: #FFE5E5; border: 1px solid #F2CACA; border-radius: 6px; padding: 10px 12px; font-size: 11.5px; color: #8A2929; margin-bottom: 10px; }
+  .missing-section { background: #FFF8E5; border-left: 4px solid #F0B400; padding: 12px 16px; border-radius: 8px; margin-top: 20px; }
   .missing-title { font-weight: 800; color: #8A6700; margin-bottom: 6px; font-size: 12px; }
-  .footer { margin-top: 40px; padding-top: 18px; border-top: 1px solid #E9E9ED; color: #8A8A8F; font-size: 10.5px; text-align: center; }
+  .footer { margin-top: 36px; padding-top: 16px; border-top: 1px solid #E9E9ED; color: #8A8A8F; font-size: 10.5px; text-align: center; }
 </style></head><body>
   <div class="header">
-    <div class="company">Telex Business Support Services Inc.</div>
+    <div class="company">Telex Business Support Services Inc. · Innovation Department</div>
     <div class="title">End-of-Day Report</div>
     <div class="meta">
       <strong>Team:</strong> ${escapeHtml(teamName)}<br>
@@ -217,20 +330,10 @@ function buildPdfHtml({
     <div class="exec-text">${escapeHtml(executiveSummary)}</div>
   </div>
   <div class="divider">INDIVIDUAL EOD REPORTS</div>
-  ${sections}
+  ${personSections}
   ${missingHtml}
   <div class="footer">Generated by TxHive · ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Manila' })} (Manila Time) · Schedule data from Trackio</div>
 </body></html>`;
-}
-
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 
 async function generatePdfBuffer(html) {
@@ -266,9 +369,6 @@ async function uploadPdfToCloudinary(buffer, filename) {
   });
 }
 
-/**
- * Main entry: generate full EOD summary using Trackio for expected list
- */
 async function generateEodSummary({ channelId, date = new Date(), force = false }) {
   const channel = await Channel.findById(channelId);
   if (!channel) throw new Error('Channel not found');
@@ -280,17 +380,13 @@ async function generateEodSummary({ channelId, date = new Date(), force = false 
     return { skipped: true, reason: 'Already generated today' };
   }
 
-  // 🔗 Get scheduled members from Trackio (cross-referenced with channel members)
   const scheduledUsers = await getScheduledChannelMembers(channel, User, date);
-  console.log(
-    `📅 ${scheduledUsers.length} member(s) scheduled for ${dateStr} in #${channel.name}`
-  );
+  console.log(`📅 ${scheduledUsers.length} member(s) scheduled for ${dateStr} in #${channel.name}`);
 
   if (scheduledUsers.length === 0) {
     return { skipped: true, reason: 'No scheduled members today (per Trackio)' };
   }
 
-  // Get messages for the day
   const messages = await Message.find({
     channel: channel._id,
     createdAt: { $gte: startUTC, $lte: endUTC },
@@ -303,7 +399,6 @@ async function generateEodSummary({ channelId, date = new Date(), force = false 
     return { skipped: true, reason: 'No EOD messages submitted today' };
   }
 
-  // Group by sender
   const bySender = new Map();
   for (const m of messages) {
     const senderId = m.sender._id.toString();
@@ -319,28 +414,37 @@ async function generateEodSummary({ channelId, date = new Date(), force = false 
     bySender.get(senderId).messages.push(m.content);
   }
 
-  console.log(`📝 Summarizing ${bySender.size} EOD report(s) via Gemini API...`);
+  console.log(`📝 Parsing ${bySender.size} EOD report(s) into project structure...`);
   const individualSummaries = [];
+  let isFirstCall = true;
   for (const [, person] of bySender) {
+    // ✅ Stagger calls — 7 seconds between each to stay under 10 RPM safely
+    if (!isFirstCall) {
+      console.log('⏱️  Waiting 7s before next Gemini call (rate limit safety)...');
+      await new Promise((r) => setTimeout(r, 7000));
+    }
+    isFirstCall = false;
+
     const combined = person.messages.join('\n\n');
-    const ai = await summarizeIndividualEod(person.name, combined);
+    const parsed = await parseEodIntoProjects(person.name, combined);
     individualSummaries.push({
       name: person.name,
       email: person.email,
       submittedAt: person.firstSubmittedAt,
-      summary: ai.summary,
-      keyItems: ai.keyItems || [],
-      blockers: ai.blockers || [],
-      tomorrow: ai.tomorrow || [],
+      projects: parsed.projects,
+      additionalTasks: parsed.additionalTasks,
+      hasContent: parsed.hasContent,
+      raw: parsed.raw,
     });
-    await new Promise((r) => setTimeout(r, 500));
   }
 
-  // Determine missing members (scheduled but did not submit)
   const submittedIds = new Set(bySender.keys());
   const missingMembers = scheduledUsers
     .filter((u) => !submittedIds.has(u._id.toString()))
     .map((u) => ({ name: u.name, email: u.email }));
+
+  console.log('⏱️  Waiting 7s before executive summary call...');
+  await new Promise((r) => setTimeout(r, 7000));
 
   console.log(`📝 Generating executive overview...`);
   const executiveSummary = await generateExecutiveSummary(individualSummaries, channel.name);
@@ -363,7 +467,6 @@ async function generateEodSummary({ channelId, date = new Date(), force = false 
 
   console.log(`✅ PDF uploaded: ${pdfUrl}`);
 
-  // POST to GHL webhook (from .env)
   if (GHL_WEBHOOK_URL) {
     try {
       await axios.post(
@@ -405,9 +508,6 @@ async function generateEodSummary({ channelId, date = new Date(), force = false 
   };
 }
 
-/**
- * Auto-trigger check: if all SCHEDULED members have submitted, generate summary
- */
 async function checkAndTriggerEod(channelId) {
   const channel = await Channel.findById(channelId);
   if (!channel || !channel.isEodChannel || !channel.eodConfig.autoSendOnComplete) return;
@@ -415,11 +515,9 @@ async function checkAndTriggerEod(channelId) {
   const { startUTC, endUTC, dateStr } = getDayBoundaries(new Date(), channel.eodConfig.timezone);
   if (channel.eodConfig.lastSummaryDate === dateStr) return;
 
-  // Get who's scheduled today (from Trackio)
   const scheduledUsers = await getScheduledChannelMembers(channel, User, new Date());
-  if (scheduledUsers.length === 0) return; // No one scheduled today
+  if (scheduledUsers.length === 0) return;
 
-  // Get who submitted today
   const submitters = await Message.distinct('sender', {
     channel: channel._id,
     createdAt: { $gte: startUTC, $lte: endUTC },
@@ -432,18 +530,14 @@ async function checkAndTriggerEod(channelId) {
   const allSubmitted = [...scheduledIds].every((id) => submittedIds.has(id));
 
   if (allSubmitted) {
-    console.log(
-      `🎯 All ${scheduledUsers.length} scheduled member(s) submitted in #${channel.name} — triggering summary`
-    );
+    console.log(`🎯 All ${scheduledUsers.length} scheduled member(s) submitted in #${channel.name} — triggering summary`);
     try {
       await generateEodSummary({ channelId: channel._id });
     } catch (err) {
       console.error('❌ Auto-trigger error:', err.message);
     }
   } else {
-    console.log(
-      `⏳ #${channel.name}: ${submittedIds.size}/${scheduledIds.size} submitted, waiting...`
-    );
+    console.log(`⏳ #${channel.name}: ${submittedIds.size}/${scheduledIds.size} submitted, waiting...`);
   }
 }
 
