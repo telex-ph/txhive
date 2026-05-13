@@ -8,6 +8,10 @@ const channelSchema = new mongoose.Schema(
     isPrivate: { type: Boolean, default: false },
     workspace: { type: mongoose.Schema.Types.ObjectId, ref: 'Workspace' },
     members: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    admins: {
+      type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+      default: [],
+    },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     lastMessage: { type: mongoose.Schema.Types.ObjectId, ref: 'Message' },
     lastActivity: { type: Date, default: Date.now },

@@ -9,6 +9,8 @@ class Channel {
   final String? workspace;
   final List<User> members;
   final DateTime? lastActivity;
+  final String createdBy;
+  final List<String> admins;
 
   Channel({
     required this.id,
@@ -19,6 +21,8 @@ class Channel {
     this.workspace,
     this.members = const [],
     this.lastActivity,
+    required this.createdBy,
+    required this.admins,
   });
 
   factory Channel.fromJson(Map<String, dynamic> json) {
@@ -39,7 +43,14 @@ class Channel {
       isPrivate: json['isPrivate'] ?? false,
       workspace: json['workspace'] is String ? json['workspace'] : null,
       members: members,
-      lastActivity: json['lastActivity'] != null ? DateTime.tryParse(json['lastActivity']) : null,
+      lastActivity: json['lastActivity'] != null
+          ? DateTime.tryParse(json['lastActivity'])
+          : null,
+      createdBy: _readId(json['createdBy']),
+      admins: ((json['admins'] as List?) ?? [])
+          .map((item) => _readId(item))
+          .where((id) => id.isNotEmpty)
+          .toList(),
     );
   }
 
@@ -49,6 +60,16 @@ class Channel {
       return other?.name ?? 'DM';
     }
     return name;
+  }
+
+  static String _readId(dynamic value) {
+    if (value == null) return '';
+
+    if (value is Map) {
+      return (value['_id'] ?? value['id'] ?? '').toString();
+    }
+
+    return value.toString();
   }
 }
 

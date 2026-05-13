@@ -56,6 +56,7 @@ router.post('/', protect, async (req, res) => {
       workspace,
       isPrivate: !!isPrivate,
       members: isPrivate ? [req.user._id] : ws.members.map((m) => m.user),
+      admins: [req.user._id],
       createdBy: req.user._id,
     });
 
@@ -335,9 +336,9 @@ router.delete('/:id', protect, async (req, res) => {
       return res.status(404).json({ message: 'Workspace not found' });
     }
 
-    if (!canManageChannel(workspace, channel, req.user._id)) {
+    if (!isChannelOwnerOrAdmin(channel, req.user._id)) {
       return res.status(403).json({
-        message: 'You do not have permission to delete this channel',
+        message: 'Only the channel owner or channel admin can delete this channel',
       });
     }
 
@@ -359,6 +360,73 @@ router.delete('/:id', protect, async (req, res) => {
     });
   } catch (err) {
     console.error('Delete channel error:', err);
+    return res.status(500).json({
+      message: err.message || 'Failed to delete channel',
+    });
+  }
+});
+
+const toId = (value) => {
+  if (!value) return '';
+
+  if (value._id) {
+    return value._id.toString();
+  }
+
+  return value.toString();
+};
+
+const isChannelOwnerOrAdmin = (channel, userId) => {
+  const currentUserId = toId(userId);
+  const ownerId = toId(channel.createdBy);
+
+  const adminIds = (channel.admins || []).map((admin) => toId(admin));
+
+  return ownerId === currentUserId || adminIds.includes(currentUserId);
+};
+
+// DELETE /api/channels/:id
+router.delete('/:id', protect, async (req, res) => {
+  try {
+    const channel = await Channel.findById(req.params.id);
+
+    if (!channel) {
+      return res.status(404).json({
+        message: 'Channel not found',
+      });
+    }
+
+    if (channel.type !== 'channel') {
+      return res.status(400).json({
+        message: 'Only workspace channels can be deleted',
+      });
+    }
+
+    if (!isChannelOwnerOrAdmin(channel, req.user._id)) {
+      return res.status(403).json({
+        message: 'Only the channel owner or channel admin can delete this channel',
+      });
+    }
+
+    await Message.deleteMany({ channel: channel._id });
+    await Channel.findByIdAndDelete(channel._id);
+
+    const io = req.app.get('io');
+
+    if (io && channel.workspace) {
+      io.to(channel.workspace.toString()).emit('channel:deleted', {
+        _id: channel._id.toString(),
+        workspaceId: channel.workspace.toString(),
+      });
+    }
+
+    return res.json({
+      message: 'Channel deleted',
+      _id: channel._id.toString(),
+    });
+  } catch (err) {
+    console.error('Delete channel error:', err);
+
     return res.status(500).json({
       message: err.message || 'Failed to delete channel',
     });

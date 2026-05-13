@@ -22,6 +22,18 @@ class _HomeScreenState extends State<HomeScreen> {
   Channel? selectedChannel;
   bool loading = true;
 
+  bool _canManageChannel(Channel channel, String currentUserId) {
+    if (currentUserId.isEmpty) return false;
+
+    return channel.createdBy == currentUserId ||
+        channel.admins.contains(currentUserId);
+  }
+
+  bool _canCurrentUserManageChannel(Channel channel) {
+    final currentUserId = context.read<AuthProvider>().user?.id ?? '';
+    return _canManageChannel(channel, currentUserId);
+  }
+
   String _cleanChannelName(String value) {
     return value.trim().replaceFirst(RegExp(r'^#+\s*'), '');
   }
@@ -965,6 +977,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _confirmDeleteChannel(Channel channel) async {
+    if (!_canCurrentUserManageChannel(channel)) {
+      _showError(
+          'Only the channel owner or channel admin can delete this channel');
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
@@ -998,6 +1015,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _deleteChannel(Channel channel) async {
     if (selectedWorkspaceId == null) return;
+
+    if (!_canCurrentUserManageChannel(channel)) {
+      _showError(
+          'Only the channel owner or channel admin can delete this channel');
+      return;
+    }
 
     try {
       await ApiService.delete('/channels/${channel.id}');
@@ -1613,19 +1636,22 @@ class _HomeScreenState extends State<HomeScreen> {
               if (channels.isEmpty)
                 _emptyListTile('No channels yet')
               else
-                ...channels.map(
-                  (c) => _channelTile(
+                ...channels.map((c) {
+                  final canManage = _canManageChannel(c, currentUserId);
+
+                  return _channelTile(
                     leading: c.isPrivate
                         ? Icons.lock_outline_rounded
                         : Icons.tag_rounded,
                     title: _cleanChannelName(c.name),
                     selected: selectedChannel?.id == c.id,
                     onTap: () => _selectChannel(c),
-                    onSettings: () => _openChannelSettingsDialog(c),
+                    onSettings:
+                        canManage ? () => _openChannelSettingsDialog(c) : null,
                     onEodSettings: () => _openEodSettingsFor(c),
-                    onDelete: () => _confirmDeleteChannel(c),
-                  ),
-                ),
+                    onDelete: canManage ? () => _confirmDeleteChannel(c) : null,
+                  );
+                }),
               const SizedBox(height: 18),
               _directMessagesHeader(currentUserId),
               const SizedBox(height: 8),
