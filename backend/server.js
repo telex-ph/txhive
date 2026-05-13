@@ -5,6 +5,7 @@ const cors = require('cors');
 const { Server } = require('socket.io');
 const connectDB = require('./config/db');
 const { initSocket } = require('./socket');
+const { startEodCronJobs } = require('./services/eodCron');
 
 const app = express();
 const server = http.createServer(app);
@@ -29,9 +30,11 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/workspaces', require('./routes/workspaces'));
 app.use('/api/channels', require('./routes/channels'));
 app.use('/api/messages', require('./routes/messages'));
+app.use('/api/eod', require('./routes/eod'));
 
 // Socket setup
 initSocket(io);
+startEodCronJobs();
 
 // Error handler
 app.use((err, req, res, next) => {

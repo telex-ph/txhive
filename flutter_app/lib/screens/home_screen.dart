@@ -5,6 +5,7 @@ import '../services/api_service.dart';
 import '../models/channel.dart';
 import 'chat_screen.dart';
 import 'workspace_details_screen.dart';
+import 'eod_settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -862,6 +863,24 @@ class _HomeScreenState extends State<HomeScreen> {
     ).then((_) => _loadData());
   }
 
+  void _openEodSettings() {
+    if (selectedChannel == null || selectedWorkspaceId == null) return;
+    if (selectedChannel!.type != 'channel') {
+      _showError('EOD settings only available for channels');
+      return;
+    }
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EodSettingsScreen(
+          channelId: selectedChannel!.id,
+          channelName: selectedChannel!.name,
+          workspaceId: selectedWorkspaceId!,
+        ),
+      ),
+    );
+  }
+
   void _showError(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -938,6 +957,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 tooltip: 'Members',
                 onPressed: _openWorkspaceDetails,
               ),
+            IconButton(
+              icon: const Icon(Icons.summarize_outlined),
+              tooltip: 'EOD Settings',
+              onPressed: _openEodSettings,
+            ),
           ],
         ),
         drawer: SizedBox(
@@ -1064,7 +1088,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   ...workspaces.map((w) {
                     final isSelected = w['_id'] == selectedWorkspaceId;
-                    final name = (w['name'] as String?) ?? 'W';
+                    final name = w['name']?.toString() ?? 'W';
                     final initial =
                         name.isNotEmpty ? name[0].toUpperCase() : 'W';
 
@@ -1179,10 +1203,13 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildChannelList(String currentUserId) {
     final wsName = workspaces.isEmpty
         ? 'No Workspace'
-        : workspaces.firstWhere(
-            (w) => w['_id'] == selectedWorkspaceId,
-            orElse: () => {'name': 'No Workspace'},
-          )['name'];
+        : (workspaces
+                .firstWhere(
+                  (w) => w['_id'] == selectedWorkspaceId,
+                  orElse: () => {'name': 'No Workspace'},
+                )['name']
+                ?.toString() ??
+            'No Workspace');
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1255,8 +1282,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 _emptyListTile('No direct messages yet')
               else
                 ...dms.map((d) {
-                  final name = d.displayName(currentUserId);
-                  final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
+                  final rawName = d.displayName(currentUserId);
+                  final name = rawName.isEmpty ? 'Direct Message' : rawName;
+                  final initial = name[0].toUpperCase();
 
                   return ListTile(
                     dense: true,

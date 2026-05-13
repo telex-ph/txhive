@@ -6,6 +6,7 @@ import '../models/message.dart';
 import '../services/api_service.dart';
 import '../services/socket_service.dart';
 import '../providers/auth_provider.dart';
+import 'dart:async';
 
 class ChatScreen extends StatefulWidget {
   final Channel channel;
@@ -16,8 +17,13 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
+  void Function(dynamic)? _onMessageNew;
+  void Function(dynamic)? _onMessageDeleted;
+  void Function(dynamic)? _onTypingStart;
+  void Function(dynamic)? _onTypingStop;
   final _msgCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
+  final Map<String, Timer> _typingTimers = {};
 
   List<Message> messages = [];
   bool loading = true;
@@ -43,12 +49,20 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    // ✅ I-cancel lahat ng typing timers
+    for (final timer in _typingTimers.values) {
+      timer.cancel();
+    }
+    _typingTimers.clear();
+
+    if (_onMessageNew != null) SocketService.off('message:new', _onMessageNew!);
+    if (_onMessageDeleted != null)
+      SocketService.off('message:deleted', _onMessageDeleted!);
+    if (_onTypingStart != null)
+      SocketService.off('typing:start', _onTypingStart!);
+    if (_onTypingStop != null) SocketService.off('typing:stop', _onTypingStop!);
+
     SocketService.leaveChannel(widget.channel.id);
-    SocketService.off('message:new');
-    SocketService.off('message:updated');
-    SocketService.off('message:deleted');
-    SocketService.off('typing:start');
-    SocketService.off('typing:stop');
     _msgCtrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
@@ -57,42 +71,61 @@ class _ChatScreenState extends State<ChatScreen> {
   void _setupSocket() {
     SocketService.joinChannel(widget.channel.id);
 
-    SocketService.on('message:new', (data) {
+    _onMessageNew = (data) {
+      if (!mounted) return;
       try {
-        print(
-            '🔔 Got message:new — channel: ${data['channel']} | current: ${widget.channel.id}');
         final m = Message.fromJson(Map<String, dynamic>.from(data));
         if (m.channelId == widget.channel.id) {
-          // Prevent duplicate kung naipasok na via HTTP response
           if (!messages.any((existing) => existing.id == m.id)) {
             setState(() => messages.add(m));
             _scrollToBottom();
           }
         }
       } catch (e) {
-        print('❌ Error parsing socket message: $e');
+        debugPrint('❌ Error parsing socket message: $e');
       }
-    });
+    };
 
-    SocketService.on('message:deleted', (data) {
-      final id = data['_id'];
-      setState(() => messages.removeWhere((m) => m.id == id));
-    });
+    _onMessageDeleted = (data) {
+      if (!mounted) return;
+      setState(() => messages.removeWhere((m) => m.id == data['_id']));
+    };
 
-    SocketService.on('typing:start', (data) {
+    _onTypingStart = (data) {
+      if (!mounted) return;
       if (data['channelId'] == widget.channel.id) {
         final name = data['user']?['name'] ?? '';
         if (name.isNotEmpty) {
+          // ✅ I-cancel ang dati bago mag-reset ng timer
+          _typingTimers[name]?.cancel();
+
           setState(() => typingUsers.add(name));
+
+          // ✅ Auto-remove kung 3 seconds walang bagong typing event
+          _typingTimers[name] = Timer(const Duration(seconds: 3), () {
+            if (mounted) setState(() => typingUsers.remove(name));
+            _typingTimers.remove(name);
+          });
         }
       }
-    });
+    };
 
-    SocketService.on('typing:stop', (data) {
+    _onTypingStop = (data) {
+      if (!mounted) return;
       if (data['channelId'] == widget.channel.id) {
-        setState(() => typingUsers.clear());
+        final name = data['user']?['name'] ?? '';
+        // ✅ I-cancel ang timer at tanggalin agad
+        _typingTimers[name]?.cancel();
+        _typingTimers.remove(name);
+        setState(() => typingUsers.remove(name));
       }
-    });
+    };
+
+    // ✅ I-register ang mga stored handlers
+    SocketService.on('message:new', _onMessageNew!);
+    SocketService.on('message:deleted', _onMessageDeleted!);
+    SocketService.on('typing:start', _onTypingStart!);
+    SocketService.on('typing:stop', _onTypingStop!);
   }
 
   Future<void> _loadMessages() async {
@@ -112,7 +145,10 @@ class _ChatScreenState extends State<ChatScreen> {
     final text = _msgCtrl.text.trim();
     if (text.isEmpty || sending) return;
 
-    setState(() => sending = true);
+    setState(() {
+      sending = true;
+      typingUsers.clear();
+    });
     _msgCtrl.clear();
     SocketService.typingStop(widget.channel.id);
 

@@ -5,6 +5,7 @@ const cloudinary = require('cloudinary').v2;
 const Message = require('../models/Message');
 const Channel = require('../models/Channel');
 const { protect } = require('../middleware/auth');
+const { checkAndTriggerEod } = require('../services/eodSummarizer');
 
 const router = express.Router();
 
@@ -17,13 +18,12 @@ cloudinary.config({
 const storage = new CloudinaryStorage({
   cloudinary,
   params: {
-    folder: 'teamsclone',
+    folder: 'txhive',
     resource_type: 'auto',
   },
 });
 
 const upload = multer({ storage });
-
 
 // GET /api/messages/:channelId?page=1&limit=50
 router.get('/:channelId', protect, async (req, res) => {
@@ -55,8 +55,7 @@ router.get('/:channelId', protect, async (req, res) => {
   }
 });
 
-// POST /api/messages - send message (also broadcast via socket)
-// POST /api/messages - send message (also broadcast via socket)
+// POST /api/messages - send message (also broadcast via socket + auto-trigger EOD)
 router.post('/', protect, async (req, res) => {
   try {
     const channel = await Channel.findOne({
@@ -98,18 +97,22 @@ router.post('/', protect, async (req, res) => {
       lastActivity: new Date(),
     });
 
-    // Convert to plain JSON to ensure ObjectIds become strings
     const payload = JSON.parse(JSON.stringify(message));
 
     const io = req.app.get('io');
     const roomName = `channel:${channelId}`;
     const roomSize = io.sockets.adapter.rooms.get(roomName)?.size || 0;
-    
     console.log(`📢 Broadcasting to ${roomName} | sockets in room: ${roomSize}`);
-    
     io.to(roomName).emit('message:new', payload);
 
     res.status(201).json(payload);
+
+    // 🎯 EOD auto-trigger (fire-and-forget — does not block response)
+    if (channel.isEodChannel) {
+      checkAndTriggerEod(channelId).catch((err) =>
+        console.error('EOD auto-trigger error:', err.message)
+      );
+    }
   } catch (err) {
     console.error('❌ Send message error:', err);
     res.status(500).json({ message: err.message });
