@@ -240,10 +240,26 @@ router.put('/:id', protect, async (req, res) => {
     message.edited = true;
     await message.save();
 
-    const io = req.app.get('io');
-    io.to(`channel:${message.channel}`).emit('message:updated', message);
+    const updatedMessage = await Message.findById(message._id)
+      .populate('sender', 'name email avatar')
+      .populate({
+        path: 'replyTo',
+        populate: {
+          path: 'sender',
+          select: 'name avatar',
+        },
+      });
 
-    res.json(message);
+    const io = req.app.get('io');
+
+    if (io) {
+      io.to(`channel:${message.channel}`).emit(
+        'message:updated',
+        updatedMessage,
+      );
+    }
+
+    res.json(updatedMessage);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

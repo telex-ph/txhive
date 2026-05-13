@@ -106,6 +106,36 @@ class ApiService {
     return _handle(res);
   }
 
+  static Future<dynamic> uploadBytes(
+    String path, {
+    required List<int> bytes,
+    required String filename,
+  }) async {
+    final token = await getToken();
+
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('${AppConfig.apiUrl}$path'),
+    );
+
+    if (token != null) {
+      request.headers['Authorization'] = 'Bearer $token';
+    }
+
+    request.files.add(
+      http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: filename,
+      ),
+    );
+
+    final streamed = await request.send();
+    final res = await http.Response.fromStream(streamed);
+
+    return _handle(res);
+  }
+
   static dynamic _handle(http.Response res) {
     dynamic body = {};
 

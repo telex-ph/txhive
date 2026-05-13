@@ -5,6 +5,10 @@ class User {
   final String avatar;
   final String status;
   final String statusMessage;
+  final String jobTitle;
+  final String department;
+  final String phone;
+  final String location;
   final String? token;
 
   User({
@@ -15,6 +19,10 @@ class User {
     this.status = 'offline',
     this.statusMessage = '',
     this.token,
+    this.jobTitle = '',
+    this.department = '',
+    this.phone = '',
+    this.location = '',
   });
 
   factory User.fromJson(Map<String, dynamic> json) {
@@ -26,6 +34,10 @@ class User {
       status: json['status'] ?? 'offline',
       statusMessage: json['statusMessage'] ?? '',
       token: json['token'],
+      jobTitle: (json['jobTitle'] ?? '').toString(),
+      department: (json['department'] ?? '').toString(),
+      phone: (json['phone'] ?? '').toString(),
+      location: (json['location'] ?? '').toString(),
     );
   }
 

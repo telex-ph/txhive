@@ -39,7 +39,9 @@ class AuthProvider extends ChangeNotifier {
     _loading = true;
     notifyListeners();
     try {
-      final data = await ApiService.post('/auth/login', {'email': email, 'password': password}, auth: false);
+      final data = await ApiService.post(
+          '/auth/login', {'email': email, 'password': password},
+          auth: false);
       await ApiService.setToken(data['token']);
       _user = User.fromJson(data);
       await SocketService.connect();
@@ -71,6 +73,59 @@ class AuthProvider extends ChangeNotifier {
     await ApiService.clearToken();
     SocketService.disconnect();
     _user = null;
+    notifyListeners();
+  }
+
+  Future<void> refreshMe() async {
+    final data = await ApiService.get('/auth/me');
+    _user = User.fromJson(Map<String, dynamic>.from(data));
+    notifyListeners();
+  }
+
+  Future<void> updateProfile({
+    required String name,
+    required String status,
+    required String statusMessage,
+    required String jobTitle,
+    required String department,
+    required String phone,
+    required String location,
+  }) async {
+    final data = await ApiService.put(
+      '/auth/me',
+      {
+        'name': name,
+        'status': status,
+        'statusMessage': statusMessage,
+        'jobTitle': jobTitle,
+        'department': department,
+        'phone': phone,
+        'location': location,
+      },
+    );
+
+    _user = User.fromJson(Map<String, dynamic>.from(data));
+    notifyListeners();
+  }
+
+  Future<void> uploadAvatar({
+    required List<int> bytes,
+    required String filename,
+  }) async {
+    final data = await ApiService.uploadBytes(
+      '/auth/me/avatar',
+      bytes: bytes,
+      filename: filename,
+    );
+
+    _user = User.fromJson(Map<String, dynamic>.from(data));
+    notifyListeners();
+  }
+
+  Future<void> removeAvatar() async {
+    final data = await ApiService.delete('/auth/me/avatar');
+
+    _user = User.fromJson(Map<String, dynamic>.from(data));
     notifyListeners();
   }
 }

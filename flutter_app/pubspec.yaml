@@ -33,7 +33,7 @@ dependencies:
   emoji_picker_flutter: ^2.1.1
 
   # File handling
-  image_picker: ^1.0.7
+  image_picker: ^1.2.2
   file_picker: ^8.0.0+1
 
   # Desktop window
