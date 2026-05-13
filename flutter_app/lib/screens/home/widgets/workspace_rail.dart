@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 
 import '../../../core/theme/app_colors.dart';
-import '../../../providers/auth_provider.dart';
 
 class WorkspaceRail extends StatelessWidget {
   final List<dynamic> workspaces;
@@ -10,8 +8,6 @@ class WorkspaceRail extends StatelessWidget {
   final Future<void> Function(dynamic workspace) onWorkspaceSelected;
   final VoidCallback onCreateWorkspace;
   final VoidCallback onJoinWorkspace;
-  final VoidCallback onEditProfile;
-  final VoidCallback onLogout;
 
   const WorkspaceRail({
     super.key,
@@ -20,66 +16,36 @@ class WorkspaceRail extends StatelessWidget {
     required this.onWorkspaceSelected,
     required this.onCreateWorkspace,
     required this.onJoinWorkspace,
-    required this.onEditProfile,
-    required this.onLogout,
   });
 
-  String _safeString(dynamic Function() read, String fallback) {
-    try {
-      final value = read();
-
-      if (value == null) return fallback;
-
-      final text = value.toString().trim();
-      return text.isEmpty ? fallback : text;
-    } catch (_) {
-      return fallback;
-    }
-  }
-
-  String _initial(String value, {String fallback = '?'}) {
+  String _initial(String value, {String fallback = 'W'}) {
     final text = value.trim();
     return text.isEmpty ? fallback : text[0].toUpperCase();
   }
 
-  Color _statusColor(String status) {
-    switch (status) {
-      case 'online':
-        return Colors.green;
-      case 'busy':
-        return Colors.red;
-      case 'away':
-        return Colors.orange;
-      case 'offline':
-      default:
-        return Colors.grey;
-    }
+  Map<String, dynamic> _workspaceMap(dynamic workspace) {
+    if (workspace is Map<String, dynamic>) return workspace;
+    if (workspace is Map) return Map<String, dynamic>.from(workspace);
+    return <String, dynamic>{};
   }
 
   @override
   Widget build(BuildContext context) {
     return Container(
       color: AppColors.dark,
-      padding: const EdgeInsets.symmetric(vertical: 12),
+      padding: const EdgeInsets.symmetric(vertical: 10),
       child: Column(
         children: [
-          _profileButton(context),
-          const SizedBox(height: 14),
+          const SizedBox(height: 2),
           Expanded(
             child: SingleChildScrollView(
               child: Column(
                 children: [
                   ...workspaces.map((workspace) {
-                    final workspaceMap = workspace is Map
-                        ? Map<String, dynamic>.from(workspace)
-                        : <String, dynamic>{};
+                    final map = _workspaceMap(workspace);
 
-                    final id = (workspaceMap['_id'] ?? workspaceMap['id'] ?? '')
-                        .toString();
-
-                    final name =
-                        (workspaceMap['name'] ?? 'Workspace').toString();
-
+                    final id = (map['_id'] ?? map['id'] ?? '').toString();
+                    final name = (map['name'] ?? 'Workspace').toString();
                     final selected = id == selectedWorkspaceId;
 
                     return Padding(
@@ -93,162 +59,25 @@ class WorkspaceRail extends StatelessWidget {
                       ),
                     );
                   }),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 10),
                   Container(
-                    width: 38,
+                    width: 34,
                     height: 1,
                     color: Colors.white.withOpacity(0.10),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 10),
                   _railActionButton(
                     icon: Icons.add_rounded,
                     tooltip: 'Create workspace',
                     onTap: onCreateWorkspace,
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 8),
                   _railActionButton(
                     icon: Icons.group_add_outlined,
                     tooltip: 'Join workspace',
                     onTap: onJoinWorkspace,
                   ),
                 ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          _railActionButton(
-            icon: Icons.logout_rounded,
-            tooltip: 'Logout',
-            onTap: onLogout,
-          ),
-          const SizedBox(height: 6),
-        ],
-      ),
-    );
-  }
-
-  Widget _profileButton(BuildContext context) {
-    final dynamic user = context.watch<AuthProvider>().user;
-
-    final name = _safeString(() => user?.name, 'User');
-    final email = _safeString(() => user?.email, '');
-    final avatar = _safeString(() => user?.avatar, '');
-    final status = _safeString(() => user?.status, 'offline');
-    final initial = _initial(name);
-
-    return PopupMenuButton<String>(
-      tooltip: 'Profile',
-      offset: const Offset(56, 0),
-      onSelected: (value) {
-        switch (value) {
-          case 'profile':
-            onEditProfile();
-            break;
-          case 'logout':
-            onLogout();
-            break;
-        }
-      },
-      itemBuilder: (_) => [
-        PopupMenuItem(
-          enabled: false,
-          child: SizedBox(
-            width: 240,
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 22,
-                  backgroundColor: const Color(0xFFF2D7D7),
-                  backgroundImage:
-                      avatar.isNotEmpty ? NetworkImage(avatar) : null,
-                  child: avatar.isEmpty
-                      ? Text(
-                          initial,
-                          style: const TextStyle(
-                            color: AppColors.primary,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        )
-                      : null,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        name,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w900,
-                          color: AppColors.textDark,
-                        ),
-                      ),
-                      if (email.isNotEmpty)
-                        Text(
-                          email,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: AppColors.textMuted,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const PopupMenuDivider(),
-        const PopupMenuItem(
-          value: 'profile',
-          child: Row(
-            children: [
-              Icon(Icons.account_circle_outlined, size: 19),
-              SizedBox(width: 10),
-              Text('Edit profile'),
-            ],
-          ),
-        ),
-        const PopupMenuItem(
-          value: 'logout',
-          child: Row(
-            children: [
-              Icon(Icons.logout_rounded, size: 19),
-              SizedBox(width: 10),
-              Text('Logout'),
-            ],
-          ),
-        ),
-      ],
-      child: Stack(
-        alignment: Alignment.bottomRight,
-        children: [
-          CircleAvatar(
-            radius: 25,
-            backgroundColor: AppColors.darkSoft,
-            backgroundImage: avatar.isNotEmpty ? NetworkImage(avatar) : null,
-            child: avatar.isEmpty
-                ? Text(
-                    initial,
-                    style: const TextStyle(
-                      color: AppColors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  )
-                : null,
-          ),
-          Container(
-            width: 14,
-            height: 14,
-            decoration: BoxDecoration(
-              color: _statusColor(status),
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: AppColors.dark,
-                width: 2,
               ),
             ),
           ),
@@ -262,35 +91,23 @@ class WorkspaceRail extends StatelessWidget {
     required bool selected,
     required VoidCallback onTap,
   }) {
-    final initial = _initial(name, fallback: 'W');
+    final initial = _initial(name);
 
     return Tooltip(
       message: name,
-      child: GestureDetector(
+      child: InkWell(
         onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          width: 48,
-          height: 48,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          width: 42,
+          height: 42,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(selected ? 15 : 24),
-            gradient: selected
-                ? const LinearGradient(
-                    colors: [
-                      AppColors.primaryDark,
-                      AppColors.primary,
-                    ],
+            color: selected ? AppColors.primary : AppColors.darkSoft,
+            borderRadius: BorderRadius.circular(10),
+            border: selected
+                ? Border.all(
+                    color: Colors.white.withOpacity(0.16),
                   )
-                : null,
-            color: selected ? null : AppColors.darkSoft,
-            boxShadow: selected
-                ? [
-                    BoxShadow(
-                      color: AppColors.primary.withOpacity(0.32),
-                      blurRadius: 16,
-                      offset: const Offset(0, 7),
-                    ),
-                  ]
                 : null,
           ),
           child: Center(
@@ -299,7 +116,7 @@ class WorkspaceRail extends StatelessWidget {
               style: const TextStyle(
                 color: AppColors.white,
                 fontWeight: FontWeight.w900,
-                fontSize: 18,
+                fontSize: 16,
               ),
             ),
           ),
@@ -317,18 +134,18 @@ class WorkspaceRail extends StatelessWidget {
       message: tooltip,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(10),
         child: Container(
-          width: 44,
-          height: 44,
+          width: 42,
+          height: 42,
           decoration: BoxDecoration(
             color: AppColors.darkSoft,
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(10),
           ),
           child: Icon(
             icon,
             color: AppColors.white,
-            size: 22,
+            size: 21,
           ),
         ),
       ),

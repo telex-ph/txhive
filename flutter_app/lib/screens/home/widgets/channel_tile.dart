@@ -32,12 +32,12 @@ class ChannelTile extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           onLongPress: onSettings,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(10),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 180),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(10),
               color: selected ? AppColors.softRed : Colors.transparent,
               border: Border.all(
                 color: selected ? AppColors.softRedBorder : Colors.transparent,

@@ -45,19 +45,22 @@ class ChannelSidebar extends StatelessWidget {
   Widget build(BuildContext context) {
     final wsName = workspaces.isEmpty
         ? 'No Workspace'
-        : (workspaces.firstWhere(
-                (w) => w['_id'] == selectedWorkspaceId,
-                orElse: () => {'name': 'No Workspace'},
-              )['name']
-                  ?.toString() ??
-              'No Workspace');
+        : (workspaces
+                .firstWhere(
+                  (w) => w['_id'] == selectedWorkspaceId,
+                  orElse: () => {'name': 'No Workspace'},
+                )['name']
+                ?.toString() ??
+            'No Workspace');
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
           padding: const EdgeInsets.fromLTRB(20, 20, 16, 16),
+          width: 290,
           decoration: const BoxDecoration(
+            color: AppColors.panel,
             border: Border(bottom: BorderSide(color: AppColors.border)),
           ),
           child: Row(
@@ -125,8 +128,9 @@ class ChannelSidebar extends StatelessWidget {
                     onTap: () => onSelectChannel(channel),
                     onSettings:
                         canManage ? () => onOpenChannelSettings(channel) : null,
-                    onMembers:
-                        channel.isPrivate ? () => onOpenChannelMembers(channel) : null,
+                    onMembers: channel.isPrivate
+                        ? () => onOpenChannelMembers(channel)
+                        : null,
                     onEodSettings: () => onOpenEodSettings(channel),
                     onDelete: canManage ? () => onDeleteChannel(channel) : null,
                   );
@@ -136,7 +140,8 @@ class ChannelSidebar extends StatelessWidget {
                 title: 'DIRECT MESSAGES',
                 actionIcon: Icons.add_comment_outlined,
                 actionTooltip: 'New direct message',
-                onAction: selectedWorkspaceId == null ? null : onNewDirectMessage,
+                onAction:
+                    selectedWorkspaceId == null ? null : onNewDirectMessage,
               ),
               const SizedBox(height: 8),
               if (dms.isEmpty)

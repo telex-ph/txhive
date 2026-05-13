@@ -18,6 +18,7 @@ import 'home/widgets/channel_sidebar.dart';
 import 'home/widgets/workspace_rail.dart';
 import 'workspace_details_screen.dart';
 import 'profile/edit_profile_dialog.dart';
+import 'home/widgets/shell_top_bar.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -455,8 +456,6 @@ class _HomeScreenState extends State<HomeScreen> {
       onWorkspaceSelected: _selectWorkspace,
       onCreateWorkspace: _createWorkspace,
       onJoinWorkspace: _joinWorkspace,
-      onEditProfile: _openEditProfileDialog,
-      onLogout: () => context.read<AuthProvider>().logout(),
     );
 
     final channelSidebar = ChannelSidebar(
@@ -521,33 +520,39 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       backgroundColor: AppColors.surface,
       body: SafeArea(
-        child: Row(
+        child: Column(
           children: [
-            SizedBox(width: 86, child: workspaceRail),
-            Container(
-              width: 300,
-              margin: const EdgeInsets.fromLTRB(0, 12, 12, 12),
-              decoration: _panelDecoration(),
-              child: channelSidebar,
+            ShellTopBar(
+              title: 'TxHive',
+              onOpenProfile: _openEditProfileDialog,
+              onLogout: () => context.read<AuthProvider>().logout(),
             ),
             Expanded(
-              child: Container(
-                margin: const EdgeInsets.fromLTRB(0, 12, 12, 12),
-                decoration: _panelDecoration(),
-                child: selectedChannel == null
-                    ? const AppEmptyState(
-                        icon: Icons.chat_bubble_outline_rounded,
-                        title: 'Select a channel',
-                        subtitle:
-                            'Choose a channel or direct message from the sidebar to start chatting.',
-                      )
-                    : ClipRRect(
-                        borderRadius: BorderRadius.circular(28),
-                        child: ChatScreen(
-                          channel: selectedChannel!,
-                          key: ValueKey(selectedChannel!.id),
-                        ),
-                      ),
+              child: Row(
+                children: [
+                  SizedBox(width: 72, child: workspaceRail),
+                  Container(
+                    width: 300,
+                    decoration: _sidebarPanelDecoration(),
+                    child: channelSidebar,
+                  ),
+                  Expanded(
+                    child: Container(
+                      decoration: _chatPanelDecoration(),
+                      child: selectedChannel == null
+                          ? const AppEmptyState(
+                              icon: Icons.chat_bubble_outline_rounded,
+                              title: 'Select a channel',
+                              subtitle:
+                                  'Choose a channel or direct message from the sidebar to start chatting.',
+                            )
+                          : ChatScreen(
+                              channel: selectedChannel!,
+                              key: ValueKey(selectedChannel!.id),
+                            ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -556,18 +561,18 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  BoxDecoration _panelDecoration() {
-    return BoxDecoration(
+  BoxDecoration _sidebarPanelDecoration() {
+    return const BoxDecoration(
       color: AppColors.white,
-      borderRadius: BorderRadius.circular(28),
-      border: Border.all(color: AppColors.border),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withOpacity(0.04),
-          blurRadius: 18,
-          offset: const Offset(0, 8),
-        ),
-      ],
+      border: Border(
+        right: BorderSide(color: AppColors.border),
+      ),
+    );
+  }
+
+  BoxDecoration _chatPanelDecoration() {
+    return const BoxDecoration(
+      color: AppColors.white,
     );
   }
 }
