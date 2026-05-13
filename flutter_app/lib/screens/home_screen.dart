@@ -22,6 +22,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Channel? selectedChannel;
   bool loading = true;
 
+  String _cleanChannelName(String value) {
+    return value.trim().replaceFirst(RegExp(r'^#+\s*'), '');
+  }
+
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   static const Color _primary = Color(0xFFA10000);
@@ -597,7 +601,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                             child: ElevatedButton(
                               onPressed: () async {
-                                final name = nameCtrl.text.trim();
+                                final name = _cleanChannelName(nameCtrl.text);
                                 if (name.isEmpty) {
                                   ScaffoldMessenger.of(dialogContext)
                                       .showSnackBar(
@@ -668,6 +672,350 @@ class _HomeScreenState extends State<HomeScreen> {
 
     nameCtrl.dispose();
     descCtrl.dispose();
+  }
+
+  Future<void> _refreshChannelsAfterChange(String channelId) async {
+    if (selectedWorkspaceId == null) return;
+
+    final wasSelected = selectedChannel?.id == channelId;
+
+    await _loadChannels(selectedWorkspaceId!);
+
+    if (!mounted) return;
+
+    if (wasSelected) {
+      setState(() {
+        final index = channels.indexWhere((c) => c.id == channelId);
+
+        selectedChannel = index >= 0
+            ? channels[index]
+            : channels.isNotEmpty
+                ? channels.first
+                : null;
+      });
+    } else {
+      setState(() {});
+    }
+  }
+
+  void _openEodSettingsFor(Channel channel) {
+    if (selectedWorkspaceId == null) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EodSettingsScreen(
+          channelId: channel.id,
+          channelName: _cleanChannelName(channel.name),
+          workspaceId: selectedWorkspaceId!,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openChannelSettingsDialog(Channel channel) async {
+    final nameCtrl = TextEditingController(
+      text: _cleanChannelName(channel.name),
+    );
+
+    final descCtrl = TextEditingController(
+      text: channel.description,
+    );
+
+    bool isPrivate = channel.isPrivate;
+    bool saving = false;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Row(
+                children: [
+                  Icon(
+                    isPrivate ? Icons.lock_outline_rounded : Icons.tag_rounded,
+                    color: _primary,
+                  ),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text(
+                      'Channel settings',
+                      style: TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 430,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Channel name',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: _textMuted,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: nameCtrl,
+                      autofocus: true,
+                      decoration: InputDecoration(
+                        hintText: 'e.g. eod-report',
+                        prefixIcon: const Icon(
+                          Icons.tag_rounded,
+                          color: _primary,
+                        ),
+                        filled: true,
+                        fillColor: _surface,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: const BorderSide(color: _border),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: const BorderSide(
+                            color: _primary,
+                            width: 1.4,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    const Text(
+                      'Description',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: _textMuted,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: descCtrl,
+                      maxLines: 3,
+                      decoration: InputDecoration(
+                        hintText: 'What is this channel about?',
+                        filled: true,
+                        fillColor: _surface,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: const BorderSide(color: _border),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: const BorderSide(
+                            color: _primary,
+                            width: 1.4,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: _surface,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: _border),
+                      ),
+                      child: SwitchListTile(
+                        value: isPrivate,
+                        activeColor: _primary,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 4,
+                        ),
+                        title: Row(
+                          children: [
+                            Icon(
+                              isPrivate
+                                  ? Icons.lock_outline_rounded
+                                  : Icons.public_rounded,
+                              size: 18,
+                              color: isPrivate ? _primary : _textMuted,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              isPrivate ? 'Private channel' : 'Public channel',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                color: _textDark,
+                              ),
+                            ),
+                          ],
+                        ),
+                        subtitle: Text(
+                          isPrivate
+                              ? 'Only invited members can access this channel.'
+                              : 'Everyone in the workspace can access this channel.',
+                          style: const TextStyle(
+                            color: _textMuted,
+                            fontSize: 12,
+                          ),
+                        ),
+                        onChanged: saving
+                            ? null
+                            : (value) {
+                                setDialogState(() {
+                                  isPrivate = value;
+                                });
+                              },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: saving ? null : () => Navigator.pop(dialogContext),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _primary,
+                    foregroundColor: _white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  onPressed: saving
+                      ? null
+                      : () async {
+                          final name = _cleanChannelName(nameCtrl.text);
+
+                          if (name.isEmpty) {
+                            ScaffoldMessenger.of(dialogContext).showSnackBar(
+                              const SnackBar(
+                                content: Text('Channel name is required'),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                            return;
+                          }
+
+                          setDialogState(() => saving = true);
+
+                          final ok = await _updateChannel(
+                            channel,
+                            name: name,
+                            description: descCtrl.text.trim(),
+                            isPrivate: isPrivate,
+                          );
+
+                          if (!mounted) return;
+
+                          if (ok) {
+                            Navigator.pop(dialogContext);
+                          } else {
+                            setDialogState(() => saving = false);
+                          }
+                        },
+                  child: saving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: _white,
+                          ),
+                        )
+                      : const Text(
+                          'Save changes',
+                          style: TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    nameCtrl.dispose();
+    descCtrl.dispose();
+  }
+
+  Future<bool> _updateChannel(
+    Channel channel, {
+    required String name,
+    required String description,
+    required bool isPrivate,
+  }) async {
+    try {
+      await ApiService.put(
+        '/channels/${channel.id}',
+        {
+          'name': name,
+          'description': description,
+          'isPrivate': isPrivate,
+        },
+      );
+
+      await _refreshChannelsAfterChange(channel.id);
+
+      return true;
+    } catch (e) {
+      _showError(e.toString());
+      return false;
+    }
+  }
+
+  Future<void> _confirmDeleteChannel(Channel channel) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Delete channel?'),
+          content: Text(
+            'This will delete #${_cleanChannelName(channel.name)} and its messages. This action cannot be undone.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed == true) {
+      await _deleteChannel(channel);
+    }
+  }
+
+  Future<void> _deleteChannel(Channel channel) async {
+    if (selectedWorkspaceId == null) return;
+
+    try {
+      await ApiService.delete('/channels/${channel.id}');
+
+      final deletedSelectedChannel = selectedChannel?.id == channel.id;
+
+      await _loadChannels(selectedWorkspaceId!);
+
+      if (!mounted) return;
+
+      setState(() {
+        if (deletedSelectedChannel) {
+          selectedChannel = channels.isNotEmpty ? channels.first : null;
+        }
+      });
+    } catch (e) {
+      _showError(e.toString());
+    }
   }
 
   Future<void> _createWorkspace() async {
@@ -1270,9 +1618,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     leading: c.isPrivate
                         ? Icons.lock_outline_rounded
                         : Icons.tag_rounded,
-                    title: '# ${c.name}',
+                    title: _cleanChannelName(c.name),
                     selected: selectedChannel?.id == c.id,
                     onTap: () => _selectChannel(c),
+                    onSettings: () => _openChannelSettingsDialog(c),
+                    onEodSettings: () => _openEodSettingsFor(c),
+                    onDelete: () => _confirmDeleteChannel(c),
                   ),
                 ),
               const SizedBox(height: 18),
@@ -1347,6 +1698,9 @@ class _HomeScreenState extends State<HomeScreen> {
     required String title,
     required bool selected,
     required VoidCallback onTap,
+    VoidCallback? onSettings,
+    VoidCallback? onEodSettings,
+    VoidCallback? onDelete,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
@@ -1354,6 +1708,7 @@ class _HomeScreenState extends State<HomeScreen> {
         color: Colors.transparent,
         child: InkWell(
           onTap: onTap,
+          onLongPress: onSettings,
           borderRadius: BorderRadius.circular(16),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 180),
@@ -1383,6 +1738,70 @@ class _HomeScreenState extends State<HomeScreen> {
                       color: selected ? _primary : _textDark,
                     ),
                   ),
+                ),
+                PopupMenuButton<String>(
+                  tooltip: 'Channel options',
+                  icon: Icon(
+                    Icons.more_horiz_rounded,
+                    size: 18,
+                    color: selected ? _primary : _textMuted,
+                  ),
+                  onSelected: (value) {
+                    switch (value) {
+                      case 'settings':
+                        onSettings?.call();
+                        break;
+                      case 'eod':
+                        onEodSettings?.call();
+                        break;
+                      case 'delete':
+                        onDelete?.call();
+                        break;
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    if (onSettings != null)
+                      const PopupMenuItem(
+                        value: 'settings',
+                        child: Row(
+                          children: [
+                            Icon(Icons.settings_outlined, size: 18),
+                            SizedBox(width: 10),
+                            Text('Channel settings'),
+                          ],
+                        ),
+                      ),
+                    if (onEodSettings != null)
+                      const PopupMenuItem(
+                        value: 'eod',
+                        child: Row(
+                          children: [
+                            Icon(Icons.summarize_outlined, size: 18),
+                            SizedBox(width: 10),
+                            Text('EOD settings'),
+                          ],
+                        ),
+                      ),
+                    if (onDelete != null) const PopupMenuDivider(),
+                    if (onDelete != null)
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.delete_outline_rounded,
+                              size: 18,
+                              color: Colors.red,
+                            ),
+                            SizedBox(width: 10),
+                            Text(
+                              'Delete channel',
+                              style: TextStyle(color: Colors.red),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
                 ),
               ],
             ),

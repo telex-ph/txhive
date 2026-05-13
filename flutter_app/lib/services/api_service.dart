@@ -21,24 +21,37 @@ class ApiService {
 
   static Future<Map<String, String>> _headers({bool auth = true}) async {
     final headers = {'Content-Type': 'application/json'};
+
     if (auth) {
       final token = await getToken();
-      if (token != null) headers['Authorization'] = 'Bearer $token';
+      if (token != null) {
+        headers['Authorization'] = 'Bearer $token';
+      }
     }
+
     return headers;
   }
 
   static Future<dynamic> get(String path) async {
-    final res = await http.get(Uri.parse('${AppConfig.apiUrl}$path'), headers: await _headers());
+    final res = await http.get(
+      Uri.parse('${AppConfig.apiUrl}$path'),
+      headers: await _headers(),
+    );
+
     return _handle(res);
   }
 
-  static Future<dynamic> post(String path, Map<String, dynamic> body, {bool auth = true}) async {
+  static Future<dynamic> post(
+    String path,
+    Map<String, dynamic> body, {
+    bool auth = true,
+  }) async {
     final res = await http.post(
       Uri.parse('${AppConfig.apiUrl}$path'),
       headers: await _headers(auth: auth),
       body: jsonEncode(body),
     );
+
     return _handle(res);
   }
 
@@ -48,30 +61,70 @@ class ApiService {
       headers: await _headers(),
       body: jsonEncode(body),
     );
+
+    return _handle(res);
+  }
+
+  static Future<dynamic> patch(String path, Map<String, dynamic> body) async {
+    final res = await http.patch(
+      Uri.parse('${AppConfig.apiUrl}$path'),
+      headers: await _headers(),
+      body: jsonEncode(body),
+    );
+
     return _handle(res);
   }
 
   static Future<dynamic> delete(String path) async {
-    final res = await http.delete(Uri.parse('${AppConfig.apiUrl}$path'), headers: await _headers());
+    final res = await http.delete(
+      Uri.parse('${AppConfig.apiUrl}$path'),
+      headers: await _headers(),
+    );
+
     return _handle(res);
   }
 
   static Future<dynamic> uploadFile(String path, File file) async {
     final token = await getToken();
-    final request = http.MultipartRequest('POST', Uri.parse('${AppConfig.apiUrl}$path'));
-    request.headers['Authorization'] = 'Bearer $token';
-    request.files.add(await http.MultipartFile.fromPath('file', file.path));
+
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('${AppConfig.apiUrl}$path'),
+    );
+
+    if (token != null) {
+      request.headers['Authorization'] = 'Bearer $token';
+    }
+
+    request.files.add(
+      await http.MultipartFile.fromPath('file', file.path),
+    );
+
     final streamed = await request.send();
     final res = await http.Response.fromStream(streamed);
+
     return _handle(res);
   }
 
   static dynamic _handle(http.Response res) {
-    final body = res.body.isEmpty ? {} : jsonDecode(res.body);
+    dynamic body = {};
+
+    if (res.body.isNotEmpty) {
+      try {
+        body = jsonDecode(res.body);
+      } catch (_) {
+        body = {'message': res.body};
+      }
+    }
+
     if (res.statusCode >= 200 && res.statusCode < 300) {
       return body;
-    } else {
-      throw Exception(body['message'] ?? 'Request failed: ${res.statusCode}');
     }
+
+    if (body is Map && body['message'] != null) {
+      throw Exception(body['message']);
+    }
+
+    throw Exception('Request failed: ${res.statusCode}');
   }
 }
