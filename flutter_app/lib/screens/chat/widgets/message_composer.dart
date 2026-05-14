@@ -67,7 +67,7 @@ class MessageComposer extends StatelessWidget {
               height: 44,
               decoration: BoxDecoration(
                 color: AppColors.surfaceAlt,
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(8),
               ),
               child: IconButton(
                 icon: const Icon(
@@ -82,7 +82,7 @@ class MessageComposer extends StatelessWidget {
               child: Container(
                 decoration: BoxDecoration(
                   color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(20),
+                  borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: AppColors.border),
                 ),
                 child: Actions(
@@ -140,7 +140,7 @@ class MessageComposer extends StatelessWidget {
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(8),
                 gradient: const LinearGradient(
                   colors: [AppColors.primaryDark, AppColors.primary],
                 ),
