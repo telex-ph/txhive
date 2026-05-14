@@ -6,6 +6,7 @@ import '../core/widgets/app_empty_state.dart';
 import '../models/channel.dart';
 import '../providers/auth_provider.dart';
 import '../services/api_service.dart';
+import 'activity_screen.dart';
 import 'chat_screen.dart';
 import 'eod_settings_screen.dart';
 import 'home/dialogs/channel_members_dialog.dart';
@@ -14,11 +15,11 @@ import 'home/dialogs/create_channel_dialog.dart';
 import 'home/dialogs/new_direct_message_dialog.dart';
 import 'home/dialogs/workspace_dialog.dart';
 import 'home/utils/channel_helpers.dart';
+import 'home/widgets/app_rail.dart';
 import 'home/widgets/channel_sidebar.dart';
-import 'home/widgets/workspace_rail.dart';
+import 'home/widgets/shell_top_bar.dart';
 import 'workspace_details_screen.dart';
 import 'profile/edit_profile_dialog.dart';
-import 'home/widgets/shell_top_bar.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -36,6 +37,8 @@ class _HomeScreenState extends State<HomeScreen> {
   String? selectedWorkspaceId;
   Channel? selectedChannel;
   bool loading = true;
+
+  AppRailDestination _railDestination = AppRailDestination.chat;
 
   @override
   void initState() {
@@ -104,7 +107,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _selectChannel(Channel channel) {
-    setState(() => selectedChannel = channel);
+    setState(() {
+      selectedChannel = channel;
+      _railDestination = AppRailDestination.chat;
+    });
 
     if (Navigator.canPop(context)) {
       Navigator.pop(context);
@@ -220,11 +226,7 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    final result = await showChannelSettingsDialog(
-      context,
-      channel: channel,
-    );
-
+    final result = await showChannelSettingsDialog(context, channel: channel);
     if (result == null) return;
 
     try {
@@ -383,9 +385,8 @@ class _HomeScreenState extends State<HomeScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => WorkspaceDetailsScreen(
-          workspaceId: selectedWorkspaceId!,
-        ),
+        builder: (_) =>
+            WorkspaceDetailsScreen(workspaceId: selectedWorkspaceId!),
       ),
     ).then((_) => _loadData());
   }
@@ -434,6 +435,14 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _handleRailSelected(AppRailDestination destination) {
+    setState(() => _railDestination = destination);
+  }
+
+  void _onOpenTeamsPopover() {
+    setState(() => _railDestination = AppRailDestination.chat);
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = context.watch<AuthProvider>().user;
@@ -444,16 +453,15 @@ class _HomeScreenState extends State<HomeScreen> {
     if (loading) {
       return const Scaffold(
         backgroundColor: AppColors.surface,
-        body: Center(
-          child: CircularProgressIndicator(color: AppColors.primary),
-        ),
+        body:
+            Center(child: CircularProgressIndicator(color: AppColors.primary)),
       );
     }
 
-    final workspaceRail = WorkspaceRail(
-      workspaces: workspaces,
-      selectedWorkspaceId: selectedWorkspaceId,
-      onWorkspaceSelected: _selectWorkspace,
+    final appRail = AppRail(
+      selected: _railDestination,
+      onDestinationSelected: _handleRailSelected,
+      onOpenTeamsPopover: _onOpenTeamsPopover,
       onCreateWorkspace: _createWorkspace,
       onJoinWorkspace: _joinWorkspace,
     );
@@ -465,7 +473,10 @@ class _HomeScreenState extends State<HomeScreen> {
       selectedWorkspaceId: selectedWorkspaceId,
       selectedChannel: selectedChannel,
       currentUserId: currentUserId,
+      onWorkspaceSelected: _selectWorkspace,
       onOpenWorkspaceDetails: _openWorkspaceDetails,
+      onCreateWorkspace: _createWorkspace,
+      onJoinWorkspace: _joinWorkspace,
       onCreateChannel: _openCreateChannelDialog,
       onNewDirectMessage: () => _openNewDirectMessageDialog(currentUserId),
       onSelectChannel: _selectChannel,
@@ -474,6 +485,8 @@ class _HomeScreenState extends State<HomeScreen> {
       onOpenEodSettings: _openEodSettingsFor,
       onDeleteChannel: _confirmDeleteChannel,
     );
+
+    final mainContent = _buildMainContent();
 
     if (isMobile) {
       return Scaffold(
@@ -490,30 +503,12 @@ class _HomeScreenState extends State<HomeScreen> {
           width: width < 420 ? width * 0.92 : 380,
           child: Drawer(
             backgroundColor: AppColors.white,
-            shape: const RoundedRectangleBorder(
-              borderRadius: BorderRadius.zero,
-            ),
-            child: SafeArea(
-              child: Row(
-                children: [
-                  SizedBox(width: 72, child: workspaceRail),
-                  Expanded(child: channelSidebar),
-                ],
-              ),
-            ),
+            shape:
+                const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
+            child: SafeArea(child: channelSidebar),
           ),
         ),
-        body: selectedChannel == null
-            ? const AppEmptyState(
-                icon: Icons.forum_outlined,
-                title: 'No channel selected',
-                subtitle:
-                    'Open the menu and choose a channel to start chatting.',
-              )
-            : ChatScreen(
-                channel: selectedChannel!,
-                key: ValueKey(selectedChannel!.id),
-              ),
+        body: mainContent,
       );
     }
 
@@ -523,33 +518,26 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           children: [
             ShellTopBar(
-              title: 'TxHive',
               onOpenProfile: _openEditProfileDialog,
               onLogout: () => context.read<AuthProvider>().logout(),
             ),
             Expanded(
               child: Row(
                 children: [
-                  SizedBox(width: 72, child: workspaceRail),
-                  Container(
-                    width: 300,
-                    decoration: _sidebarPanelDecoration(),
-                    child: channelSidebar,
-                  ),
+                  appRail,
+                  if (_railDestination == AppRailDestination.chat)
+                    Container(
+                      decoration: const BoxDecoration(
+                        color: AppColors.white,
+                        border:
+                            Border(right: BorderSide(color: AppColors.border)),
+                      ),
+                      child: channelSidebar,
+                    ),
                   Expanded(
                     child: Container(
-                      decoration: _chatPanelDecoration(),
-                      child: selectedChannel == null
-                          ? const AppEmptyState(
-                              icon: Icons.chat_bubble_outline_rounded,
-                              title: 'Select a channel',
-                              subtitle:
-                                  'Choose a channel or direct message from the sidebar to start chatting.',
-                            )
-                          : ChatScreen(
-                              channel: selectedChannel!,
-                              key: ValueKey(selectedChannel!.id),
-                            ),
+                      color: AppColors.white,
+                      child: mainContent,
                     ),
                   ),
                 ],
@@ -561,18 +549,23 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  BoxDecoration _sidebarPanelDecoration() {
-    return const BoxDecoration(
-      color: AppColors.white,
-      border: Border(
-        right: BorderSide(color: AppColors.border),
-      ),
-    );
-  }
+  Widget _buildMainContent() {
+    if (_railDestination == AppRailDestination.activity) {
+      return const ActivityScreen();
+    }
 
-  BoxDecoration _chatPanelDecoration() {
-    return const BoxDecoration(
-      color: AppColors.white,
+    if (selectedChannel == null) {
+      return const AppEmptyState(
+        icon: Icons.chat_bubble_outline_rounded,
+        title: 'Select a channel',
+        subtitle:
+            'Choose a channel or direct message from the sidebar to start chatting.',
+      );
+    }
+
+    return ChatScreen(
+      channel: selectedChannel!,
+      key: ValueKey(selectedChannel!.id),
     );
   }
 }
@@ -615,7 +608,7 @@ class _MobileHomeAppBar extends StatelessWidget implements PreferredSizeWidget {
           Text(
             title,
             style: const TextStyle(
-              fontSize: 18,
+              fontSize: 16,
               fontWeight: FontWeight.w800,
               color: AppColors.textDark,
             ),
@@ -623,7 +616,7 @@ class _MobileHomeAppBar extends StatelessWidget implements PreferredSizeWidget {
           const Text(
             'TelexPH Messaging Workspace',
             style: TextStyle(
-              fontSize: 11,
+              fontSize: 10,
               color: AppColors.textMuted,
               fontWeight: FontWeight.w500,
             ),

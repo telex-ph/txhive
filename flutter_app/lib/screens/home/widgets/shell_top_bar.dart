@@ -5,13 +5,11 @@ import '../../../core/theme/app_colors.dart';
 import '../../../providers/auth_provider.dart';
 
 class ShellTopBar extends StatelessWidget {
-  final String title;
   final VoidCallback? onOpenProfile;
   final VoidCallback? onLogout;
 
   const ShellTopBar({
     super.key,
-    required this.title,
     this.onOpenProfile,
     this.onLogout,
   });
@@ -19,9 +17,7 @@ class ShellTopBar extends StatelessWidget {
   String _safeString(dynamic Function() read, String fallback) {
     try {
       final value = read();
-
       if (value == null) return fallback;
-
       final text = value.toString().trim();
       return text.isEmpty ? fallback : text;
     } catch (_) {
@@ -37,52 +33,57 @@ class ShellTopBar extends StatelessWidget {
   Color _statusColor(String status) {
     switch (status) {
       case 'online':
-        return Colors.green;
+        return const Color(0xFF2E9E44);
       case 'busy':
-        return Colors.red;
+        return const Color(0xFFD64545);
       case 'away':
-        return Colors.orange;
+        return const Color(0xFFE0A100);
       case 'offline':
       default:
-        return Colors.grey;
+        return const Color(0xFF9196A1);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 52,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       decoration: const BoxDecoration(
         color: AppColors.white,
-        border: Border(
-          bottom: BorderSide(color: AppColors.border),
-        ),
+        border: Border(bottom: BorderSide(color: AppColors.border)),
       ),
       child: Row(
         children: [
-          const Icon(
-            Icons.apps_rounded,
-            size: 18,
-            color: AppColors.textMuted,
-          ),
-          const SizedBox(width: 12),
-          Text(
-            title,
-            style: const TextStyle(
-              color: AppColors.textDark,
-              fontSize: 14,
-              fontWeight: FontWeight.w800,
+          // Logo
+          SizedBox(
+            width: 110,
+            height: 28,
+            child: Image.asset(
+              'assets/logos/txhive-logo-primary.png',
+              fit: BoxFit.contain,
+              alignment: Alignment.centerLeft,
+              errorBuilder: (_, __, ___) => const Text(
+                'TxHive',
+                style: TextStyle(
+                  color: AppColors.textDark,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
             ),
           ),
-          const SizedBox(width: 24),
+
+          // Search bar centered
           Expanded(
             child: Center(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 560),
+                constraints: const BoxConstraints(maxWidth: 580),
                 child: SizedBox(
-                  height: 34,
+                  height: 30,
                   child: TextField(
+                    style: const TextStyle(
+                        fontSize: 13, color: AppColors.textDark),
                     decoration: InputDecoration(
                       hintText: 'Search',
                       hintStyle: const TextStyle(
@@ -91,33 +92,31 @@ class ShellTopBar extends StatelessWidget {
                       ),
                       prefixIcon: const Icon(
                         Icons.search_rounded,
-                        size: 17,
+                        size: 16,
                         color: AppColors.textMuted,
+                      ),
+                      prefixIconConstraints: const BoxConstraints(
+                        minWidth: 34,
+                        minHeight: 30,
                       ),
                       filled: true,
                       fillColor: AppColors.surface,
                       contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
+                        horizontal: 10,
+                        vertical: 6,
                       ),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(6),
-                        borderSide: const BorderSide(
-                          color: AppColors.border,
-                        ),
+                        borderSide: const BorderSide(color: AppColors.border),
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(6),
-                        borderSide: const BorderSide(
-                          color: AppColors.border,
-                        ),
+                        borderSide: const BorderSide(color: AppColors.border),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(6),
                         borderSide: const BorderSide(
-                          color: AppColors.primary,
-                          width: 1.2,
-                        ),
+                            color: AppColors.primary, width: 1.2),
                       ),
                     ),
                   ),
@@ -125,16 +124,24 @@ class ShellTopBar extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: 14),
+
+          const SizedBox(width: 12),
+
+          // More menu
           IconButton(
             tooltip: 'More',
             onPressed: () {},
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
             icon: const Icon(
               Icons.more_horiz_rounded,
-              size: 20,
+              size: 18,
               color: AppColors.textMuted,
             ),
           ),
+          const SizedBox(width: 4),
+
+          // Profile menu
           _profileMenu(context),
         ],
       ),
@@ -174,7 +181,7 @@ class ShellTopBar extends StatelessWidget {
             child: Row(
               children: [
                 CircleAvatar(
-                  radius: 22,
+                  radius: 20,
                   backgroundColor: const Color(0xFFF2D7D7),
                   backgroundImage: avatarProvider,
                   child: avatarProvider == null
@@ -197,7 +204,8 @@ class ShellTopBar extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: AppColors.textDark,
-                          fontWeight: FontWeight.w900,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
                         ),
                       ),
                       if (email.isNotEmpty)
@@ -206,7 +214,7 @@ class ShellTopBar extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             color: AppColors.textMuted,
-                            fontSize: 12,
+                            fontSize: 11,
                           ),
                         ),
                     ],
@@ -219,21 +227,23 @@ class ShellTopBar extends StatelessWidget {
         const PopupMenuDivider(),
         const PopupMenuItem(
           value: 'profile',
+          height: 36,
           child: Row(
             children: [
-              Icon(Icons.account_circle_outlined, size: 19),
+              Icon(Icons.account_circle_outlined, size: 17),
               SizedBox(width: 10),
-              Text('Edit profile'),
+              Text('Edit profile', style: TextStyle(fontSize: 13)),
             ],
           ),
         ),
         const PopupMenuItem(
           value: 'logout',
+          height: 36,
           child: Row(
             children: [
-              Icon(Icons.logout_rounded, size: 19),
+              Icon(Icons.logout_rounded, size: 17),
               SizedBox(width: 10),
-              Text('Logout'),
+              Text('Logout', style: TextStyle(fontSize: 13)),
             ],
           ),
         ),
@@ -242,7 +252,7 @@ class ShellTopBar extends StatelessWidget {
         alignment: Alignment.bottomRight,
         children: [
           CircleAvatar(
-            radius: 16,
+            radius: 14,
             backgroundColor: const Color(0xFFF2D7D7),
             backgroundImage: avatarProvider,
             child: avatarProvider == null
@@ -250,22 +260,19 @@ class ShellTopBar extends StatelessWidget {
                     initial,
                     style: const TextStyle(
                       color: AppColors.primary,
-                      fontSize: 13,
+                      fontSize: 12,
                       fontWeight: FontWeight.w900,
                     ),
                   )
                 : null,
           ),
           Container(
-            width: 10,
-            height: 10,
+            width: 9,
+            height: 9,
             decoration: BoxDecoration(
               color: _statusColor(status),
               shape: BoxShape.circle,
-              border: Border.all(
-                color: AppColors.white,
-                width: 2,
-              ),
+              border: Border.all(color: AppColors.white, width: 1.5),
             ),
           ),
         ],

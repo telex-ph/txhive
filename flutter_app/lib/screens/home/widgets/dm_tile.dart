@@ -17,52 +17,50 @@ class DmTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(16),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              color: selected ? AppColors.softRed : Colors.transparent,
-              border: Border.all(
-                color: selected ? AppColors.softRedBorder : Colors.transparent,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          height: 36,
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.selectedBg : Colors.transparent,
+            border: Border(
+              left: BorderSide(
+                color: selected ? AppColors.primary : Colors.transparent,
+                width: 3,
               ),
             ),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 16,
-                  backgroundColor:
-                      selected ? AppColors.primary : const Color(0xFFEAEAF0),
-                  child: Text(
-                    initial,
-                    style: TextStyle(
-                      color: selected ? AppColors.white : AppColors.textDark,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 13,
-                    ),
+          ),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 12,
+                backgroundColor:
+                    selected ? AppColors.primary : const Color(0xFFEAEAF0),
+                child: Text(
+                  initial,
+                  style: TextStyle(
+                    color: selected ? AppColors.white : AppColors.textDark,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 11,
                   ),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    name,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                      color: selected ? AppColors.primary : AppColors.textDark,
-                    ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  name,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w500,
+                    color: selected ? AppColors.primary : AppColors.textDark,
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
