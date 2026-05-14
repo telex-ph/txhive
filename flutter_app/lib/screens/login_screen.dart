@@ -306,12 +306,7 @@ class _LoginScreenState extends State<LoginScreen> {
               width: 78,
               height: 78,
               decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [_primary, _primaryDark],
-                ),
+                borderRadius: BorderRadius.circular(20),
                 boxShadow: [
                   BoxShadow(
                     color: _primary.withOpacity(0.32),
@@ -320,15 +315,13 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ],
               ),
-              child: const Center(
-                child: Text(
-                  'T',
-                  style: TextStyle(
-                    color: _white,
-                    fontSize: 34,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 0.5,
-                  ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: Image.asset(
+                  'assets/logos/txhive-icon-primary-512.png',
+                  width: 78,
+                  height: 78,
+                  fit: BoxFit.cover,
                 ),
               ),
             ),
@@ -352,15 +345,11 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 14),
-        const Text(
-          'TelexPH',
-          style: TextStyle(
-            color: _textDark,
-            fontSize: 24,
-            fontWeight: FontWeight.w900,
-            letterSpacing: 0.2,
-          ),
+        const SizedBox(height: 18),
+        Image.asset(
+          'assets/logos/txhive-logo-primary-letters.png',
+          height: 26,
+          fit: BoxFit.contain,
         ),
         const SizedBox(height: 4),
         const Text(
